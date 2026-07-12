@@ -44,9 +44,15 @@ const bronxFips = await (async () => {
 if (bronxFips) {
   await check("fmr_lookup", { entityid: bronxFips }, (b) => !!b.fair_market_rents);
   await check("income_limits", { entityid: bronxFips, household_size: 3 }, (b) => b.very_low_50pct !== undefined);
+  // the README worked example, answered server-side
+  await check(
+    "affordability_check",
+    { entityid: bronxFips, rent: 2600, bedrooms: 2, income: 48000, household_size: 3 },
+    (b) => typeof b.rent_check?.delta === "number" && !!b.rent_check?.verdict && !!b.income_check?.verdict,
+  );
 } else {
   failed++;
-  console.error("FAIL fmr_lookup/income_limits: could not resolve a Bronx FIPS from list_counties");
+  console.error("FAIL fmr_lookup/income_limits/affordability_check: could not resolve a Bronx FIPS from list_counties");
 }
 
 console.log(failed === 0 ? "smoke: all passed" : `smoke: ${failed} FAILED`);

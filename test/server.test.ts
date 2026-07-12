@@ -16,6 +16,17 @@ function mockFetch(payload: unknown, status = 200) {
     new Response(JSON.stringify(payload), { status, headers: { "content-type": "application/json" } }),
   );
 }
+// Route by URL fragment, for tools that hit more than one HUD endpoint.
+function mockFetchRoutes(routes: Array<[fragment: string, payload: unknown]>) {
+  return vi.fn(async (url: any) => {
+    const u = String(url);
+    const hit = routes.find(([fragment]) => u.includes(fragment));
+    return new Response(JSON.stringify(hit ? hit[1] : { error: `no mock route for ${u}` }), {
+      status: hit ? 200 : 404,
+      headers: { "content-type": "application/json" },
+    });
+  });
+}
 function bodyOf(res: any) {
   return JSON.parse(res.content[0].text);
 }
@@ -68,10 +79,11 @@ describe("mcp-fairrent server", () => {
     vi.unstubAllGlobals();
   });
 
-  it("exposes all five tools", async () => {
+  it("exposes all six tools", async () => {
     const client = await connect();
     const { tools } = await client.listTools();
     expect(tools.map((t) => t.name).sort()).toEqual([
+      "affordability_check",
       "fmr_lookup",
       "income_limits",
       "list_counties",
@@ -267,7 +279,7 @@ describe("mcp-fairrent server", () => {
     // a directly acceptable entityid.
     const client = await connect();
     const { tools } = await client.listTools();
-    for (const name of ["fmr_lookup", "income_limits"]) {
+    for (const name of ["fmr_lookup", "income_limits", "affordability_check"]) {
       const tool = tools.find((t) => t.name === name)!;
       const desc = (tool.inputSchema.properties as any).entityid.description as string;
       expect(desc).toContain("zip_crosswalk");
@@ -296,5 +308,243 @@ describe("mcp-fairrent server", () => {
       expect(gap).toBeGreaterThanOrEqual(REQUEST_GAP_MS); // the throttle floor holds
       expect(gap).toBeLessThan(REQUEST_GAP_MS + FETCH_LATENCY); // latency is NOT added on top (the old completion-spacing bug)
     }
+  });
+
+  // affordability_check: the README's worked example answered server-side.
+  // Fixture math against IL_PAYLOAD/FMR_PAYLOAD (household of 3): 30% line 32900,
+  // 50% line 54850, 80% line 87750; two-bedroom FMR 2213, year 2026.
+  describe("affordability_check", () => {
+    const BOTH = () => mockFetchRoutes([
+      ["/fmr/data/", FMR_PAYLOAD],
+      ["/il/data/", IL_PAYLOAD],
+    ]);
+
+    it("answers the README worked example: rent gap and income bands in one call", async () => {
+      vi.stubEnv("HUD_API_TOKEN", "test-token");
+      const fetchMock = BOTH();
+      vi.stubGlobal("fetch", fetchMock);
+      const client = await connect();
+      const res = await client.callTool({
+        name: "affordability_check",
+        arguments: { entityid: "3600599999", rent: 2600, bedrooms: 2, income: 48000, household_size: 3 },
+      });
+      const urls = fetchMock.mock.calls.map((c: any[]) => String(c[0]));
+      expect(urls.some((u) => u.includes("/fmr/data/3600599999"))).toBe(true);
+      expect(urls.some((u) => u.includes("/il/data/3600599999"))).toBe(true);
+      const body = bodyOf(res);
+      expect(body.area).toBe("Bronx County");
+      // rent side: computed numbers the LLM can cite, plus the verdict prose
+      expect(body.rent_check.fmr).toBe(2213);
+      expect(body.rent_check.year).toBe("2026"); // which year's table answered
+      expect(body.rent_check.delta).toBe(387);
+      expect(body.rent_check.delta_pct).toBe(17.5);
+      expect(body.rent_check.above_fmr).toBe(true);
+      expect(body.rent_check.verdict).toMatch(/\$387/);
+      expect(body.rent_check.verdict).toMatch(/17\.5%/);
+      expect(body.rent_check.verdict).toMatch(/above the 2026 Fair Market Rent of \$2,213/);
+      // income side: one readout per band, boundary-inclusive
+      expect(body.income_check.year).toBe("2026");
+      expect(body.income_check.categories.extremely_low_30pct).toEqual(
+        expect.objectContaining({ limit: 32900, qualifies: false }),
+      );
+      expect(body.income_check.categories.very_low_50pct).toEqual(
+        expect.objectContaining({ limit: 54850, qualifies: true }),
+      );
+      expect(body.income_check.categories.low_80pct).toEqual(
+        expect.objectContaining({ limit: 87750, qualifies: true }),
+      );
+      expect(body.income_check.categories.extremely_low_30pct.readout).toMatch(/above/);
+      expect(body.income_check.categories.very_low_50pct.readout).toMatch(/at or below/);
+      expect(body.income_check.verdict).toMatch(/is very low income/);
+      expect(body.income_check.verdict).toMatch(/Section 8 voucher/);
+    });
+
+    it("reports a below-FMR rent with a negative delta", async () => {
+      vi.stubEnv("HUD_API_TOKEN", "test-token");
+      vi.stubGlobal("fetch", BOTH());
+      const client = await connect();
+      const res = await client.callTool({
+        name: "affordability_check",
+        arguments: { entityid: "3600599999", rent: 1900, bedrooms: 2 },
+      });
+      const body = bodyOf(res);
+      expect(body.rent_check.delta).toBe(-313);
+      expect(body.rent_check.delta_pct).toBe(-14.1);
+      expect(body.rent_check.above_fmr).toBe(false);
+      expect(body.rent_check.verdict).toMatch(/\$313/);
+      expect(body.rent_check.verdict).toMatch(/below the 2026 Fair Market Rent/);
+    });
+
+    it("says so when the rent is exactly the FMR", async () => {
+      vi.stubEnv("HUD_API_TOKEN", "test-token");
+      vi.stubGlobal("fetch", BOTH());
+      const client = await connect();
+      const res = await client.callTool({
+        name: "affordability_check",
+        arguments: { entityid: "3600599999", rent: 2213, bedrooms: 2 },
+      });
+      const body = bodyOf(res);
+      expect(body.rent_check.delta).toBe(0);
+      expect(body.rent_check.above_fmr).toBe(false);
+      expect(body.rent_check.verdict).toMatch(/exactly/);
+    });
+
+    it("qualification is at-or-below at every threshold boundary", async () => {
+      vi.stubEnv("HUD_API_TOKEN", "test-token");
+      vi.stubGlobal("fetch", BOTH());
+      const client = await connect();
+      const at = async (income: number) =>
+        bodyOf(await client.callTool({
+          name: "affordability_check",
+          arguments: { entityid: "3600599999", income, household_size: 3 },
+        })).income_check;
+
+      const atThirty = await at(32900); // exactly the 30% line
+      expect(atThirty.categories.extremely_low_30pct.qualifies).toBe(true);
+      expect(atThirty.verdict).toMatch(/is extremely low income/);
+
+      const atFifty = await at(54850); // exactly the 50% (voucher) line
+      expect(atFifty.categories.extremely_low_30pct.qualifies).toBe(false);
+      expect(atFifty.categories.very_low_50pct.qualifies).toBe(true);
+      expect(atFifty.verdict).toMatch(/is very low income/);
+
+      const atEighty = await at(87750); // exactly the 80% line
+      expect(atEighty.categories.very_low_50pct.qualifies).toBe(false);
+      expect(atEighty.categories.low_80pct.qualifies).toBe(true);
+      expect(atEighty.verdict).toMatch(/is low income/);
+      expect(atEighty.verdict).toMatch(/above the usual Section 8 voucher line/);
+
+      const overAll = await at(87751); // one dollar over every line
+      expect(overAll.categories.low_80pct.qualifies).toBe(false);
+      expect(overAll.verdict).toMatch(/not income-eligible/);
+    });
+
+    it("rent-only call returns only rent_check and never hits the income endpoint", async () => {
+      vi.stubEnv("HUD_API_TOKEN", "test-token");
+      const fetchMock = BOTH();
+      vi.stubGlobal("fetch", fetchMock);
+      const client = await connect();
+      const res = await client.callTool({
+        name: "affordability_check",
+        arguments: { entityid: "3600599999", rent: 2600, bedrooms: 2 },
+      });
+      const body = bodyOf(res);
+      expect(body.rent_check.above_fmr).toBe(true);
+      expect(body.income_check).toBeUndefined();
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(String(fetchMock.mock.calls[0][0])).toContain("/fmr/data/");
+    });
+
+    it("income-only call returns only income_check and never hits the FMR endpoint", async () => {
+      vi.stubEnv("HUD_API_TOKEN", "test-token");
+      const fetchMock = BOTH();
+      vi.stubGlobal("fetch", fetchMock);
+      const client = await connect();
+      const res = await client.callTool({
+        name: "affordability_check",
+        arguments: { entityid: "3600599999", income: 48000, household_size: 3 },
+      });
+      const body = bodyOf(res);
+      expect(body.income_check.verdict).toMatch(/very low income/);
+      expect(body.rent_check).toBeUndefined();
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(String(fetchMock.mock.calls[0][0])).toContain("/il/data/");
+    });
+
+    it("rejects a call with nothing to check or half an input pair", async () => {
+      vi.stubEnv("HUD_API_TOKEN", "test-token");
+      const fetchMock = BOTH();
+      vi.stubGlobal("fetch", fetchMock);
+      const client = await connect();
+      await expect(
+        client.callTool({ name: "affordability_check", arguments: { entityid: "3600599999" } }),
+      ).rejects.toThrow(/nothing to check/);
+      await expect(
+        client.callTool({ name: "affordability_check", arguments: { entityid: "3600599999", rent: 2600 } }),
+      ).rejects.toThrow(/bedrooms/);
+      await expect(
+        client.callTool({ name: "affordability_check", arguments: { entityid: "3600599999", income: 48000 } }),
+      ).rejects.toThrow(/household_size/);
+      expect(fetchMock).not.toHaveBeenCalled(); // validation fires before any HUD call
+    });
+
+    it("enforces the table bounds: bedrooms 0-4, household_size 1-8", async () => {
+      vi.stubEnv("HUD_API_TOKEN", "test-token");
+      const fetchMock = BOTH();
+      vi.stubGlobal("fetch", fetchMock);
+      const client = await connect();
+      await expect(
+        client.callTool({ name: "affordability_check", arguments: { entityid: "x", rent: 2600, bedrooms: 5 } }),
+      ).rejects.toThrow(/0-4/);
+      await expect(
+        client.callTool({ name: "affordability_check", arguments: { entityid: "x", rent: 2600, bedrooms: 2.5 } }),
+      ).rejects.toThrow(/0-4/);
+      await expect(
+        client.callTool({ name: "affordability_check", arguments: { entityid: "x", income: 48000, household_size: 9 } }),
+      ).rejects.toThrow(/1-8/);
+      await expect(
+        client.callTool({ name: "affordability_check", arguments: { entityid: "x", income: 48000, household_size: 0 } }),
+      ).rejects.toThrow(/1-8/);
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it("rejects a non-positive rent and a negative income", async () => {
+      vi.stubEnv("HUD_API_TOKEN", "test-token");
+      const fetchMock = BOTH();
+      vi.stubGlobal("fetch", fetchMock);
+      const client = await connect();
+      await expect(
+        client.callTool({ name: "affordability_check", arguments: { entityid: "x", rent: 0, bedrooms: 2 } }),
+      ).rejects.toThrow(/rent/);
+      await expect(
+        client.callTool({ name: "affordability_check", arguments: { entityid: "x", rent: -100, bedrooms: 2 } }),
+      ).rejects.toThrow(/rent/);
+      await expect(
+        client.callTool({ name: "affordability_check", arguments: { entityid: "x", income: -1, household_size: 3 } }),
+      ).rejects.toThrow(/income/);
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it("refuses multi-row FMR data (small-area metros) with a pointer to a county entityid", async () => {
+      vi.stubEnv("HUD_API_TOKEN", "test-token");
+      vi.stubGlobal(
+        "fetch",
+        mockFetch({ data: { metro_name: "M", metro_status: "1", smallarea_status: "1", year: "2026", basicdata: [{ zip_code: "10451", "Two-Bedroom": "2213.0" }] } }),
+      );
+      const client = await connect();
+      await expect(
+        client.callTool({ name: "affordability_check", arguments: { entityid: "METRO123", rent: 2600, bedrooms: 2 } }),
+      ).rejects.toThrow(/county entityid/);
+    });
+
+    it("errors on holes in the tables instead of comparing against NaN", async () => {
+      vi.stubEnv("HUD_API_TOKEN", "test-token");
+      vi.stubGlobal("fetch", mockFetchRoutes([
+        // FMR table missing its four-bedroom line; IL table with empty bands
+        ["/fmr/data/", { data: { county_name: "Bronx County", basicdata: { Efficiency: "1875.0", year: "2026" } } }],
+        ["/il/data/", { data: { county_name: "Bronx County", year: "2026", very_low: {}, extremely_low: {}, low: {} } }],
+      ]));
+      const client = await connect();
+      await expect(
+        client.callTool({ name: "affordability_check", arguments: { entityid: "3600599999", rent: 2600, bedrooms: 4 } }),
+      ).rejects.toThrow(/four-bedroom/);
+      await expect(
+        client.callTool({ name: "affordability_check", arguments: { entityid: "3600599999", income: 48000, household_size: 3 } }),
+      ).rejects.toThrow(/3-person/);
+    });
+
+    it("passes the year param through to both endpoints", async () => {
+      vi.stubEnv("HUD_API_TOKEN", "test-token");
+      const fetchMock = BOTH();
+      vi.stubGlobal("fetch", fetchMock);
+      const client = await connect();
+      await client.callTool({
+        name: "affordability_check",
+        arguments: { entityid: "3600599999", rent: 2600, bedrooms: 2, income: 48000, household_size: 3, year: "2025" },
+      });
+      const urls = fetchMock.mock.calls.map((c: any[]) => String(c[0]));
+      expect(urls).toHaveLength(2);
+      for (const u of urls) expect(u).toContain("year=2025");
+    });
   });
 });

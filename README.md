@@ -10,6 +10,7 @@ For anyone answering "is this rent affordable here, and who qualifies for help?"
 |------|--------------|
 | `fmr_lookup` | Fair Market Rent for an area, by bedroom count (efficiency through 4BR). |
 | `income_limits` | The 30% / 50% / 80% AMI income thresholds for an area; pass a household size for the one line that applies. The 50% line is the Section 8 voucher cutoff. |
+| `affordability_check` | The computed verdict: how far a rent sits above or below FMR for a bedroom size (dollars and percent), and which income bands (30/50/80% AMI) a household qualifies under — arithmetic done server-side, with the underlying numbers and table year for citation. |
 | `zip_crosswalk` | Map a ZIP to the county, tract, CBSA, or congressional district it sits in, with the residential-address share so you pick the right one. |
 | `list_counties` | Counties in a state with their FIPS entity ids, to look up by county name. |
 | `list_metro_areas` | HUD metro areas (CBSAs) with their codes. |
@@ -50,7 +51,7 @@ An address is usually a ZIP, but `fmr_lookup` and `income_limits` key on a 10-di
 2. `list_counties` for that state → the county's 10-digit entity id (`36005` → `3600599999`).
 3. `fmr_lookup` and `income_limits` with that entity id → the bedroom rents and the voucher line.
 
-Worked example: *a Bronx landlord wants $2,600 for a 2-bedroom. Is that above Fair Market Rent, and would a family of three earning $48k qualify for a voucher here?*
+Worked example: *a Bronx landlord wants $2,600 for a 2-bedroom. Is that above Fair Market Rent, and would a family of three earning $48k qualify for a voucher here?* That's `affordability_check` in one call — the entity id with `rent: 2600, bedrooms: 2, income: 48000, household_size: 3` — and the answer comes back computed: the dollar and percent gap to the two-bedroom FMR, plus a per-band qualification readout against the 30/50/80% lines, with the table year and the numbers behind each verdict. The model cites; the server does the arithmetic.
 
 ## Entity ids
 
