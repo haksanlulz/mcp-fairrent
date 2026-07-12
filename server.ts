@@ -26,14 +26,23 @@ const CROSSWALK_TYPES: Record<string, number> = {
   cd: 5, // ZIP -> congressional district
 };
 
-// HUD USER allows ~60 requests/min; serialize with a small gap to stay polite.
-const REQUEST_GAP_MS = 150;
+// HUD USER allows ~60 requests/min; space request STARTS by a fixed gap so the
+// rate is bounded by REQUEST_GAP_MS no matter how long each response takes.
+export const REQUEST_GAP_MS = 150;
+let lastStart = 0;
 let queue: Promise<unknown> = Promise.resolve();
 function throttled<T>(fn: () => Promise<T>): Promise<T> {
-  const run = queue.then(fn, fn);
+  const run = queue.then(async () => {
+    const sinceLast = Date.now() - lastStart;
+    if (sinceLast < REQUEST_GAP_MS) {
+      await new Promise((r) => setTimeout(r, REQUEST_GAP_MS - sinceLast));
+    }
+    lastStart = Date.now(); // stamp the START before the fetch, so spacing is start-to-start
+    return fn();
+  });
   queue = run.then(
-    () => new Promise((r) => setTimeout(r, REQUEST_GAP_MS)),
-    () => new Promise((r) => setTimeout(r, REQUEST_GAP_MS)),
+    () => undefined,
+    () => undefined,
   );
   return run;
 }
@@ -135,7 +144,7 @@ export function createServer() {
         inputSchema: {
           type: "object",
           properties: {
-            entityid: { type: "string", description: "State code, county FIPS, CBSA code, or ZIP" },
+            entityid: { type: "string", description: "10-digit county entity id (county FIPS + 99999) or metro CBSA code. Derive from a ZIP via zip_crosswalk then list_counties" },
             year: { type: "string", description: "FMR year (e.g. '2026'); default is the latest" },
           },
           required: ["entityid"],
@@ -148,7 +157,7 @@ export function createServer() {
         inputSchema: {
           type: "object",
           properties: {
-            entityid: { type: "string", description: "State code, county FIPS, or CBSA code" },
+            entityid: { type: "string", description: "10-digit county entity id (county FIPS + 99999) or metro CBSA code. Derive from a ZIP via zip_crosswalk then list_counties" },
             household_size: { type: "number", description: "Family size 1-8; omit for all sizes" },
             year: { type: "string", description: "Income-limit year; default is the latest" },
           },

@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import { createServer } from "../server";
+import { createServer, REQUEST_GAP_MS } from "../server";
 
 async function connect(): Promise<Client> {
   const server = createServer();
@@ -258,5 +258,43 @@ describe("mcp-fairrent server", () => {
       client.callTool({ name: "fmr_lookup", arguments: { entityid: "C" } }),
     ]);
     expect(maxConcurrent).toBe(1);
+  });
+
+  it("entityid schema descriptions route ZIPs through the crosswalk, not raw ZIP/state", async () => {
+    // an LLM fills args from the SCHEMA, so the entityid property description must
+    // match the tool prose: a 10-digit county entityid or a CBSA, derived from a
+    // ZIP via zip_crosswalk -> list_counties. It must not advertise ZIP/state as
+    // a directly acceptable entityid.
+    const client = await connect();
+    const { tools } = await client.listTools();
+    for (const name of ["fmr_lookup", "income_limits"]) {
+      const tool = tools.find((t) => t.name === name)!;
+      const desc = (tool.inputSchema.properties as any).entityid.description as string;
+      expect(desc).toContain("zip_crosswalk");
+      expect(desc).toContain("99999");
+    }
+  });
+
+  it("spaces request STARTS by the throttle gap, not gap + response latency", async () => {
+    vi.stubEnv("HUD_API_TOKEN", "test-token");
+    const FETCH_LATENCY = 100; // simulated response time; strictly less than REQUEST_GAP_MS
+    const starts: number[] = [];
+    vi.stubGlobal("fetch", vi.fn(async () => {
+      starts.push(Date.now()); // record when each request actually STARTS
+      await new Promise((r) => setTimeout(r, FETCH_LATENCY));
+      return new Response(JSON.stringify(FMR_PAYLOAD), { status: 200, headers: { "content-type": "application/json" } });
+    }));
+    const client = await connect();
+    await Promise.all([
+      client.callTool({ name: "fmr_lookup", arguments: { entityid: "A" } }),
+      client.callTool({ name: "fmr_lookup", arguments: { entityid: "B" } }),
+      client.callTool({ name: "fmr_lookup", arguments: { entityid: "C" } }),
+    ]);
+    expect(starts).toHaveLength(3);
+    const gaps = starts.slice(1).map((t, i) => t - starts[i]);
+    for (const gap of gaps) {
+      expect(gap).toBeGreaterThanOrEqual(REQUEST_GAP_MS); // the throttle floor holds
+      expect(gap).toBeLessThan(REQUEST_GAP_MS + FETCH_LATENCY); // latency is NOT added on top (the old completion-spacing bug)
+    }
   });
 });
