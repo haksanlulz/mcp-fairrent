@@ -2,14 +2,14 @@
 
 MCP server for HUD housing data. Looks up Fair Market Rents by bedroom count, Section 8 income limits by household size, and the USPS ZIP-to-jurisdiction crosswalk that maps a ZIP to its county. Built on the [MCP TypeScript SDK](https://modelcontextprotocol.io).
 
-For anyone answering "is this rent affordable here, and who qualifies for help?": tenant organizers, legal-aid intake, housing counselors, relocation planners, and agents that need real HUD numbers instead of a guess.
+For anyone answering "is this rent affordable here, and who qualifies for help?": tenant organizers, legal-aid intake, housing counselors, relocation planners, and agents that need real HUD numbers.
 
 ## Tools
 
 | Tool | What it does |
 |------|--------------|
 | `fmr_lookup` | Fair Market Rent for an area, by bedroom count (efficiency through 4BR). |
-| `income_limits` | The 30% / 50% / 80% AMI income thresholds for an area; pass a household size for the one line that applies. The 50% line is the Section 8 voucher cutoff. |
+| `income_limits` | The 30% / 50% / 80% AMI income thresholds for an area; pass a household size for the one line that applies. The 50% line is the usual Section 8 voucher cutoff. |
 | `affordability_check` | The computed verdict: how far a rent sits above or below FMR for a bedroom size (dollars and percent), and which income bands (30/50/80% AMI) a household qualifies under — arithmetic done server-side, with the underlying numbers and table year for citation. |
 | `zip_crosswalk` | Map a ZIP to the county, tract, CBSA, or congressional district it sits in, with the residential-address share so you pick the right one. |
 | `list_counties` | Counties in a state with their FIPS entity ids, to look up by county name. |
@@ -28,6 +28,8 @@ Runs directly with [`tsx`](https://github.com/privatenumber/tsx); no build step.
 ## Token
 
 Every tool needs a free HUD USER API token. One-screen signup at [huduser.gov](https://www.huduser.gov/portal/dataset/fmr-api.html) → set `HUD_API_TOKEN`. The tools tell you so if it's missing.
+
+`HUD_CONTACT` (optional) sets the contact string in the User-Agent sent to HUD; defaults to this repo's URL. Nothing loads a `.env` file — set both in the shell or the MCP client's `env` block (`.env.example` lists them).
 
 ## Use it from an MCP client
 
@@ -73,6 +75,13 @@ Worked example: *a Bronx landlord wants $2,600 for a 2-bedroom. Is that above Fa
 
 `36005` is Bronx County; `list_counties` with `state: "NY"` gives its entity id `3600599999`, which `fmr_lookup` and `income_limits` take.
 
+## Limitations
+
+- Numbers are HUD's published FMR and income-limit year tables, not live market rents.
+- HUD's tables bound the inputs: bedrooms 0-4 (FMR tables stop at four bedrooms), household size 1-8 (income-limit tables stop at eight; `affordability_check`'s error gives HUD's convention for larger households).
+- `affordability_check` compares a single FMR row. Areas whose FMR data comes back multi-row (small-area/ZIP-level, or multi-year) are refused — pass a county entityid, or use `fmr_lookup` to see every row.
+- FMR is not the voucher ceiling: housing authorities set payment standards at 90-110% of FMR (24 CFR 982.503). The rent verdict carries this note.
+
 ## Develop
 
 ```bash
@@ -80,6 +89,10 @@ npm test          # vitest over an in-memory transport, fetch mocked (no network
 npm run smoke     # one live call per tool (needs HUD_API_TOKEN; skips without)
 npm run typecheck
 ```
+
+## AI assistance
+
+This project was built with AI assistance (Claude). Correctness rests on the checks, not the generation: the vitest suite drives every tool over the MCP in-memory transport against fixtures that mirror HUD's documented response samples — including this README's worked example — and `npm run smoke` makes one live call per tool against the real HUD API. I reviewed the code and am accountable for what it does.
 
 ## License
 
