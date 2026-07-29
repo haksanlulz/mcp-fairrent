@@ -17,33 +17,38 @@ For anyone answering "is this rent affordable here, and who qualifies for help?"
 
 ## Install
 
-```bash
-git clone https://github.com/haksanlulz/mcp-fairrent
-cd mcp-fairrent
-npm install
-```
-
-Runs directly with [`tsx`](https://github.com/privatenumber/tsx); no build step.
-
-## Token
-
-Every tool needs a free HUD USER API token. One-screen signup at [huduser.gov](https://www.huduser.gov/portal/dataset/fmr-api.html) → set `HUD_API_TOKEN`. The tools tell you so if it's missing.
-
-`HUD_CONTACT` (optional) sets the contact string in the User-Agent sent to HUD; defaults to this repo's URL. Nothing loads a `.env` file — set both in the shell or the MCP client's `env` block (`.env.example` lists them).
-
-## Use it from an MCP client
+Nothing to clone. Point your MCP client at it and npm fetches it on first run:
 
 ```json
 {
   "mcpServers": {
     "fairrent": {
       "command": "npx",
-      "args": ["tsx", "/absolute/path/to/mcp-fairrent/index.ts"],
+      "args": ["-y", "@haksanlulz/mcp-fairrent"],
       "env": { "HUD_API_TOKEN": "your-hud-token" }
     }
   }
 }
 ```
+
+<details>
+<summary>From source (contributors)</summary>
+
+```bash
+git clone https://github.com/haksanlulz/mcp-fairrent
+cd mcp-fairrent
+npm install
+npm run build     # emits dist/; the published bin is dist/index.js
+```
+
+`npm start` runs the TypeScript directly via [`tsx`](https://github.com/privatenumber/tsx) without building.
+</details>
+
+## Token
+
+Every tool needs a free HUD USER API token. One-screen signup at [huduser.gov](https://www.huduser.gov/portal/dataset/fmr-api.html) → set `HUD_API_TOKEN`. The tools tell you so if it's missing.
+
+`HUD_CONTACT` (optional) sets the contact string in the User-Agent sent to HUD; defaults to this repo's URL. Nothing loads a `.env` file — set both in the shell or the MCP client's `env` block (`.env.example` lists them).
 
 ## The flow
 
@@ -88,6 +93,8 @@ Worked example: *a Bronx landlord wants $2,600 for a 2-bedroom. Is that above Fa
 npm test          # vitest over an in-memory transport, fetch mocked (no network, no token)
 npm run smoke     # one live call per tool (needs HUD_API_TOKEN; skips without)
 npm run typecheck
+npm run build       # emit dist/ (what actually ships)
+npm run verify:pack # pack, install into a clean dir, drive the installed binary over stdio
 ```
 
 ## AI assistance
