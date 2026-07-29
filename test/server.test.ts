@@ -552,3 +552,40 @@ describe("mcp-fairrent server", () => {
     });
   });
 });
+
+// ---------------------------------------------------------------------------
+// SPEC qualification-never-overstates — operator-authored 2026-07-29
+// ---------------------------------------------------------------------------
+
+describe("SPEC qualification-never-overstates", () => {
+  // Same two-route fixture the affordability_check block uses; redeclared here
+  // because that one is scoped to its own describe.
+  const BOTH = () => mockFetchRoutes([
+    ["/fmr/data/", FMR_PAYLOAD],
+    ["/il/data/", IL_PAYLOAD],
+  ]);
+
+  // spec: qualification-never-overstates
+  // Given a household one dollar above an AMI threshold
+  // When affordability_check runs
+  // Then that band reports qualifies:false — the error that costs someone a
+  //      filing fee and a rejection is the FALSE POSITIVE, so every line gets
+  //      its over-by-a-dollar guard, not just the topmost one.
+  // Operator's stated worst failure for this server:
+  //      "it says someone qualifies when they don't."
+  it("one dollar over any line disqualifies that band", async () => {
+    vi.stubEnv("HUD_API_TOKEN", "test-token");
+    vi.stubGlobal("fetch", BOTH());
+    const client = await connect();
+    const at = async (income: number) =>
+      bodyOf(await client.callTool({
+        name: "affordability_check",
+        arguments: { entityid: "3600599999", income, household_size: 3 },
+      })).income_check;
+
+    // 30% line is 32900, 50% is 54850, 80% is 87750.
+    expect((await at(32901)).categories.extremely_low_30pct.qualifies).toBe(false);
+    expect((await at(54851)).categories.very_low_50pct.qualifies).toBe(false);
+    expect((await at(87751)).categories.low_80pct.qualifies).toBe(false);
+  });
+});
