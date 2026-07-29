@@ -94,6 +94,18 @@ boundary"*, which owns the at-the-line half.
 
 ## §6 Escape log
 
+**2026-07-29 · The CI rung added that same day could never have fired on `mcp-fairrent`.**
+The workflow triggers on `push: branches: [main]`; this repo's branch is `master`, and so
+is its GitHub default (remote `master`, last pushed 2026-07-18). Every sibling is on `main`,
+so the file was written once and copied across four repos without checking that the trigger
+matched the branch it landed on. A dead rung reads exactly like a passing one — nothing
+fails, no run appears, and the channel-map row still says ✅. Caught incidentally, from a
+`git commit` printing `[master ...]` while the siblings printed `[main ...]`.
+**Fixed**: `branches: [main, master]` in all four. **Rule 14 family** — a rung must be
+verified through the orchestrator's real channel, and "the workflow file exists" is not
+that verification. Still unverified until first push: whether GitHub Actions is enabled on
+these repos at all.
+
 **2026-07-29 · The npm package cannot work, and the install line I recommended was wrong.**
 Adding `bin` + `files` + a scoped name and then actually exercising the channel —
 `npm pack`, install the tarball into a clean project, spawn the installed binary and
