@@ -1,5 +1,5 @@
 {
-  "name": "mcp-fairrent",
+  "name": "@haksanlulz/mcp-fairrent",
   "version": "1.0.0",
   "type": "module",
   "description": "MCP (Model Context Protocol) server for HUD housing data: Fair Market Rents, Section 8 income limits, and the USPS ZIP-to-jurisdiction crosswalk.",
@@ -27,15 +27,26 @@
     "start": "tsx index.ts",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
-    "smoke": "tsx smoke.ts"
+    "smoke": "tsx smoke.ts",
+    "prepublishOnly": "npm run typecheck && npm test"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.29.0"
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "tsx": "^4.20.0"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
-    "tsx": "^4.20.0",
     "typescript": "^5.6.0",
     "vitest": "^2.1.0"
+  },
+  "files": [
+    "index.ts",
+    "server.ts",
+    "README.md",
+    "LICENSE",
+    ".env.example"
+  ],
+  "publishConfig": {
+    "access": "public"
   }
 }
