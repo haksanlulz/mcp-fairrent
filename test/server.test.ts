@@ -101,6 +101,10 @@ describe("mcp-fairrent server", () => {
     const call = fetchMock.mock.calls[0];
     expect(String(call[0])).toContain("/hudapi/public/fmr/data/3600599999");
     expect(call[1].headers.Authorization).toBe("Bearer test-token");
+    // HUD USER is a free public service: identify ourselves on every call. A
+    // missing UA is invisible to every other assertion here, which is how the
+    // sibling wagewatch server shipped without one until 2026-07-29.
+    expect(call[1].headers["User-Agent"]).toMatch(/^mcp-fairrent\/\d/);
     const body = bodyOf(res);
     expect(body.area).toBe("Bronx County");
     expect(body.is_metro).toBe(true);
