@@ -32,10 +32,10 @@ the clauses above as inferred until he ratifies or rewrites them.
 
 | Artifact | Real channel | Pass condition | Rung? |
 |---|---|---|---|
-| server process | an MCP client spawns it and speaks JSON-RPC over **stdio** | initialize handshake · tools/list returns the documented set · a real lookup round-trips | ✅ `npm run smoke` drives the real stdio transport; `test/` uses the in-memory transport (29 tests) |
+| server process | an MCP client spawns it and speaks JSON-RPC over **stdio** | initialize handshake · tools/list returns the documented set · a real lookup round-trips | ✅ **`npm run verify:pack` spawns the installed binary and speaks real stdio** (added 2026-07-29). ⚠️ `npm run smoke` and `test/` are BOTH `InMemoryTransport` — an earlier version of this table claimed smoke drove real stdio; it does not, and that claim was wrong when written. |
 | upstream API contract | live HUD USER API | endpoints answer; token absence is reported, not crashed | ✅ `npm run smoke` (skips loudly without `HUD_API_TOKEN`) |
-| public repo | a stranger clones and runs `npm test` | suite green, typecheck clean, README matches served tools | ✅ `npm test` + `npm run typecheck` — ⚠️ **on his machine only; there is no CI** |
-| **npm package** | **a stranger runs `npx @haksanlulz/mcp-fairrent` having never cloned** | **bin resolves · server boots · handshake answers** | 🔴 **NO RUNG, AND CURRENTLY IMPOSSIBLE — see §6 escape 2026-07-29** |
+| public repo | a stranger clones and runs `npm test` | suite green, typecheck clean, build emits | ✅ **GitHub Actions, Node 18/20/22** (added 2026-07-29): `npm ci` → typecheck → build → test, plus a separate `package` job running `verify:pack` |
+| **npm package** | a stranger runs `npx @haksanlulz/mcp-fairrent` having never cloned | bin shim resolves · server boots · handshake answers · tools/list is well-formed | ✅ **`npm run verify:pack`** — builds, packs, installs the tarball into a throwaway project, launches **through the bin shim**, speaks MCP. Mutation-probed against the real historical defect: restoring the `npx tsx` shebang turns it red. Wired into CI. |
 | registry listing (LobeHub, Glama) | a stranger reads the README there and follows it cold | documented install produces a working server | 🔴 **NO RUNG** — the README is the consumed artifact on those sites and nothing checks it stays executable |
 
 ## §3 Invariants — scans
@@ -56,12 +56,12 @@ the clauses above as inferred until he ratifies or rewrites them.
 | docs-only | none |
 | code-touch (`server.ts` / `index.ts` / `test/`) | `npm test` + `npm run typecheck` + §3 scans · **this is a public commit** |
 | behavior-change (tool names, schemas, output shape) | + `npm run smoke` with a live token + README tool table + §5 specs |
-| artifact-affecting (`package.json`, deps, shebang) | + `npm pack` and install the tarball into a clean directory + drive the installed binary over stdio |
-| release (tag / npm publish) | + the full §2 channel map, including the npm rung that does not yet exist |
+| artifact-affecting (`package.json`, deps, shebang, tsconfig) | + **`npm run verify:pack`** |
+| release (tag / npm publish) | + the full §2 channel map + `npm run smoke` with a live token + §5 specs |
 
 **Hard gate:** a skipped rung makes the done-report say **BLOCKED**, not done.
-`prepublishOnly` (`npm run typecheck && npm test`) enforces the code half of this
-mechanically; it does **not** cover the npm channel itself.
+`prepublishOnly` (`build && typecheck && test`) enforces the code half mechanically.
+The npm channel itself is covered by `verify:pack`, which CI runs on every push.
 
 ## §5 Acceptance specs
 
@@ -78,13 +78,16 @@ speak MCP to it — showed the binary dies on launch. `index.ts` carries
 `npx-cli.js` inside the *consumer's* `node_modules/npm/`, which does not exist.
 Isolated to packaging, not code — the installed source runs correctly when `tsx` is
 invoked directly, and the repo's own smoke still passes.
-**Fix requires an operator §1 ruling**, because the README states "no build step" as a
-design choice: a published bin must be plain JS with `#!/usr/bin/env node`, which means
-adding a compile step. `bin` was removed rather than left in a state that looks
-publishable and is not.
-**New rung** (§4 artifact-affecting): pack, install cold, drive the installed binary
-over stdio. **This is the founding-incident shape** — 29 green tests, a passing smoke,
-and an artifact that could not start.
+**RESOLVED same day by operator ruling** ("bring it up to our best"): a compile step went
+in. `tsc` already had `outDir`/`rootDir`/`nodenext` configured and every relative import
+already carried a `.js` extension, so the build cost was the shebang and the wiring —
+`#!/usr/bin/env node`, `bin` → `dist/index.js`, `files: ["dist"]`, `prepublishOnly`.
+**⚑ And the first version of the new rung was toothless.** It spawned `node dist/index.js`
+directly, which bypasses the shebang — so it passed against the broken package. Caught by
+mutation-probing the rung itself; it now launches through the **bin shim**, and restoring
+the `npx tsx` shebang turns it red. **This is the founding-incident shape twice over** —
+29 green tests plus a passing smoke over an artifact that could not start, and then a
+rung that could not see it.
 
 **2026-07-29 · `mcp-wagewatch` shipped with no User-Agent at all; 21 green tests never noticed.**
 It called a free federal API as an anonymous Node client while all three siblings
@@ -102,13 +105,13 @@ to return a negative is not evidence** (workspace Audit Discipline Rules 22/23).
 
 ## Known gaps, ranked by blast radius
 
-1. **npm channel** — no rung, and blocked on the §1 build-step ruling above.
-2. **No CI on any of the four.** The "stranger clones and runs `npm test`" channel is
-   verified on one machine. `label-assay` and `GUDBUS` both have GitHub Actions; these
-   do not. A workflow running `npm ci && npm run typecheck && npm test` on 18/20/22 is
-   the cheapest real coverage gain here.
-3. **README-as-artifact** — it is what LobeHub and Glama render, and nothing checks the
-   documented install still works.
-4. **vitest version drift** — fairrent 2.1.9, wagewatch 4.1.10. One suite is a major
-   version behind its siblings for no recorded reason.
-5. **§5 is empty** — no operator-authored acceptance specs anywhere in the set.
+1. **README-as-artifact.** It is what LobeHub and Glama render, and it still documents the
+   old clone-and-point-tsx-at-it install. Nothing checks the documented path executes, and
+   the published package now supports a shorter one. **Highest-value remaining item.**
+2. **§5 is empty** — no operator-authored acceptance specs anywhere in the set. §1 is also
+   transcribed rather than elicited, so both operator-owned sections are unratified.
+3. **vitest version drift** — fairrent 2.1.9, the siblings 4.1.10, for no recorded reason.
+4. **`smoke` is in-memory, not stdio.** `verify:pack` now covers the real-stdio channel, so
+   smoke's remaining job is the live upstream contract. Its name oversells it.
+5. **Nothing is published yet.** The package is verified publishable; `npm publish` is an
+   operator action.
