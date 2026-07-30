@@ -294,6 +294,7 @@ describe("mcp-fairrent server", () => {
   it("spaces request STARTS by the throttle gap, not gap + response latency", async () => {
     vi.stubEnv("HUD_API_TOKEN", "test-token");
     const FETCH_LATENCY = 100; // simulated response time; strictly less than REQUEST_GAP_MS
+    const TIMER_SLOP_MS = 5;   // see the floor assertion below — clock granularity, not slack in the contract
     const starts: number[] = [];
     vi.stubGlobal("fetch", vi.fn(async () => {
       starts.push(Date.now()); // record when each request actually STARTS
@@ -309,7 +310,12 @@ describe("mcp-fairrent server", () => {
     expect(starts).toHaveLength(3);
     const gaps = starts.slice(1).map((t, i) => t - starts[i]);
     for (const gap of gaps) {
-      expect(gap).toBeGreaterThanOrEqual(REQUEST_GAP_MS); // the throttle floor holds
+      // Tolerance, not a weakened assertion. setTimeout may fire a hair early and
+      // performance.now() rounds, so a shared CI runner measured 149 for a 150ms
+      // gap and turned this red (mcp-fairrent, Node 20, 2026-07-30). What the test
+      // actually distinguishes is ~150 from ~150+latency — a 200ms difference —
+      // so a couple of milliseconds of slack costs the test nothing.
+      expect(gap).toBeGreaterThanOrEqual(REQUEST_GAP_MS - TIMER_SLOP_MS); // the throttle floor holds
       expect(gap).toBeLessThan(REQUEST_GAP_MS + FETCH_LATENCY); // latency is NOT added on top (the old completion-spacing bug)
     }
   });

@@ -148,7 +148,17 @@ to return a negative is not evidence** (workspace Audit Discipline Rules 22/23).
    server is authored, implemented and linked (2026-07-29). Slots 2 and 3 are open. §1's
    descriptive bullets are still transcribed from the README rather than elicited; only the
    MUST NEVER clause is in his words.
-3. **vitest version drift** — fairrent 2.1.9, the siblings 4.1.10, for no recorded reason.
+3. **The package's true Node floor is UNMEASURED.** The `package` job runs
+   `npm ci` first, which installs the full dev tree (vitest 4 → vite 8, requiring
+   Node `^20.19 || >=22.12`), so it cannot run on 18 and dies before reaching the
+   tarball. A real consumer never runs `npm ci` here — they `npx` the published
+   package, which ships only `dist/` plus the MCP SDK. Proving 18 needs a
+   two-stage job: build and pack on 20, upload the artifact, install and speak
+   MCP to it on 18. Not built. **No `engines` field is declared, deliberately** —
+   an unmeasured floor asserted as fact is worse than saying nothing.
+4. **vitest version drift** — fairrent 2.1.9, the siblings 4.1.10. No longer
+   cosmetic: it was the entire reason fairrent was the only repo whose first real
+   CI run passed on Node 18 (2026-07-30).
 4. **`smoke` is in-memory, not stdio.** `verify:pack` now covers the real-stdio channel, so
    smoke's remaining job is the live upstream contract. Its name oversells it.
 5. **Nothing is published yet.** The package is verified publishable; `npm publish` is an
