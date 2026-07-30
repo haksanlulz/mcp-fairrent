@@ -21,7 +21,7 @@
     "url": "git+https://github.com/haksanlulz/mcp-fairrent.git"
   },
   "engines": {
-    "node": ">=18"
+    "node": ">=20"
   },
   "scripts": {
     "build": "tsc",
