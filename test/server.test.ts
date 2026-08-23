@@ -186,7 +186,7 @@ describe("mcp-fairrent server", () => {
     expect(url).toContain("query=10451");
     const body = bodyOf(res);
     expect(body.matches[0].geoid).toBe("36005");
-    expect(body.matches[0].res_ratio).toBe("1.0");
+    expect(body.matches[0].res_ratio).toBe(1); // ratios now numeric, 4dp
   });
 
   it("zip_crosswalk rejects a non-5-digit ZIP and an unknown target", async () => {
@@ -636,6 +636,24 @@ describe("SPEC qualification-never-overstates", () => {
 });
 
 describe("fairrent 1.1.0", () => {
+  it("a retired ZIP (HUD 404 no-data) answers with the empty-note shape, not an error", async () => {
+    vi.stubEnv("HUD_API_TOKEN", "test-token");
+    vi.stubGlobal("fetch", mockFetch([{ error: "No data found using the value 10048 for type 2" }], 404));
+    const client = await connect();
+    const body = bodyOf(await client.callTool({ name: "zip_crosswalk", arguments: { zip: "10048" } }));
+    expect(body.matches).toEqual([]);
+    expect(String(body.note)).toContain("PO-box");
+  });
+
+  it("crosswalk ratios round to four decimal places", async () => {
+    vi.stubEnv("HUD_API_TOKEN", "test-token");
+    vi.stubGlobal("fetch", mockFetch({ data: { results: [{ zip: "10451", city: "BRONX", state: "NY", res_ratio: "0.044077448175895165", bus_ratio: "1", tot_ratio: "0.5" }] } }));
+    const client = await connect();
+    const body = bodyOf(await client.callTool({ name: "geo_to_zips", arguments: { from: "county", geoid: "36005" } }));
+    expect(body.zips[0].res_ratio).toBe(0.0441);
+    expect(body.zips[0].bus_ratio).toBe(1);
+  });
+
   afterEach(() => {
     vi.unstubAllGlobals();
     vi.unstubAllEnvs();

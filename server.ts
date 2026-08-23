@@ -97,6 +97,21 @@ async function hudGet(path: string, params: Record<string, string> = {}): Promis
   });
 }
 
+// USPS ratios arrive at full double precision (0.044077448175895165); four
+// decimal places is more than address-share data supports and far easier on
+// the reader.
+function ratio(v: unknown): number | undefined {
+  const n = Number(v);
+  return Number.isFinite(n) ? Math.round(n * 10000) / 10000 : undefined;
+}
+
+// HUD signals "no rows for that value" as HTTP 404 wrapping [{error: "No data
+// found using the value ..."}] (verified live 2026-08-23 with the retired ZIP
+// 10048). For the crosswalk tools that is an ANSWER, not an error.
+function isNoDataError(err: unknown): boolean {
+  return err instanceof Error && /No data found using the value/i.test(err.message);
+}
+
 function text(s: string) {
   return { content: [{ type: "text" as const, text: s }] };
 }
@@ -516,14 +531,20 @@ export function createServer() {
         const type = CROSSWALK_TYPES[to];
         const params: Record<string, string> = { type: String(type), query: zip };
         if (args.year) params.year = String(args.year);
-        const data = await hudGet(`/usps`, params);
+        let data: any;
+        try {
+          data = await hudGet(`/usps`, params);
+        } catch (err) {
+          if (!isNoDataError(err)) throw err;
+          data = { results: [] }; // a retired / PO-box-only / unknown ZIP is an answer
+        }
         const results = (data?.results ?? []).map((r: any) => ({
           geoid: r.geoid,
           city: r.city,
           state: r.state,
-          res_ratio: r.res_ratio,
-          bus_ratio: r.bus_ratio,
-          tot_ratio: r.tot_ratio,
+          res_ratio: ratio(r.res_ratio),
+          bus_ratio: ratio(r.bus_ratio),
+          tot_ratio: ratio(r.tot_ratio),
         }));
         return asJson(
           withScope({
@@ -584,14 +605,20 @@ export function createServer() {
         if (!/^\d{2,11}$/.test(geoid)) throw new Error("geoid must be the geography's numeric GEOID (2-11 digits)");
         const params: Record<string, string> = { type: String(REVERSE_CROSSWALK_TYPES[from]), query: geoid };
         if (args.year) params.year = String(args.year);
-        const data = await hudGet(`/usps`, params);
+        let data: any;
+        try {
+          data = await hudGet(`/usps`, params);
+        } catch (err) {
+          if (!isNoDataError(err)) throw err;
+          data = { results: [] };
+        }
         const results = (data?.results ?? []).map((r: any) => ({
           zip: r.zip ?? r.geoid,
           city: r.city,
           state: r.state,
-          res_ratio: r.res_ratio,
-          bus_ratio: r.bus_ratio,
-          tot_ratio: r.tot_ratio,
+          res_ratio: ratio(r.res_ratio),
+          bus_ratio: ratio(r.bus_ratio),
+          tot_ratio: ratio(r.tot_ratio),
         }));
         return asJson(
           withScope({
