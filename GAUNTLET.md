@@ -139,6 +139,28 @@ while the siblings run 4.1.10. A rate-limiter read called fairrent's throttle na
 it is correctly serialized. **Standing rule for this repo: a probe that cannot be shown
 to return a negative is not evidence** (workspace Audit Discipline Rules 22/23).
 
+### 2026-08-23 — 1.1.0: MTSP, statedata, reverse crosswalk + sibling-standard hardening (behavior-change class)
+
+`mtsp_income_limits` (/mtspil/data — the LIHTC 20-80% bands + HERA special),
+`state_fmr_overview` (/fmr/statedata), `geo_to_zips` (reverse half of the
+12-type crosswalk table; zip_crosswalk gains the two missing forward types
+and city/state). Hardening to what the three siblings already had: handler
+errors return isError content (18 tests converted from the old
+protocol-rejection contract), unknown tools raise McpError, every payload
+rides an eligibility_scope note (new SPEC limits-not-eligibility below),
+empty crosswalk results explain themselves, HUD error objects stringify.
+Rungs: 38 tests, typecheck, verify:pack. ⚠️ No HUD token on this machine:
+grounding came from HUD's own API docs (JS-rendered; fetched via proxy) and
+the mock layer, not a live call.
+
+### SPEC limits-not-eligibility (2026-08-23)
+```
+Given any successful result from any tool
+When the payload is read
+Then it carries eligibility_scope stating figures are program lines, not
+     determinations, and FMRs are not payment standards
+```
+
 ## Known gaps, ranked by blast radius
 
 1. **README-as-artifact.** It is what LobeHub and Glama render, and it still documents the
