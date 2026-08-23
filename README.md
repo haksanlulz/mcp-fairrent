@@ -11,9 +11,12 @@ For anyone answering "is this rent affordable here, and who qualifies for help?"
 | `fmr_lookup` | Fair Market Rent for an area, by bedroom count (efficiency through 4BR). |
 | `income_limits` | The 30% / 50% / 80% AMI income thresholds for an area; pass a household size for the one line that applies. The 50% line is the usual Section 8 voucher cutoff. |
 | `affordability_check` | The computed verdict: how far a rent sits above or below FMR for a bedroom size (dollars and percent), and which income bands (30/50/80% AMI) a household qualifies under — arithmetic done server-side, with the underlying numbers and table year for citation. |
-| `zip_crosswalk` | Map a ZIP to the county, tract, CBSA, or congressional district it sits in, with the residential-address share so you pick the right one. |
+| `zip_crosswalk` | Map a ZIP to the county, tract, CBSA, CBSA division, congressional district, or county subdivision it sits in, with city/state and the residential-address share so you pick the right one. |
 | `list_counties` | Counties in a state with their FIPS entity ids, to look up by county name. |
 | `list_metro_areas` | HUD metro areas (CBSAs) with their codes. |
+| `mtsp_income_limits` | The LIHTC (tax-credit building) income bands at 20-80% AMI plus the HERA special bands (`/mtspil/data`) — a different table from the Section 8 limits, governing a different housing stock. |
+| `state_fmr_overview` | Every county's and metro's FMRs for a whole state in one call (`/fmr/statedata`), for comparing areas without one lookup per county. |
+| `geo_to_zips` | The reverse crosswalk: every ZIP inside a county, tract, metro, CBSA division, congressional district, or county subdivision, with residential-address shares and city/state. |
 
 ## Install
 

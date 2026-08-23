@@ -12,18 +12,32 @@ import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
+  McpError,
+  ErrorCode,
 } from "@modelcontextprotocol/sdk/types.js";
 
 const HUD_API = "https://www.huduser.gov/hudapi/public";
 const CONTACT = process.env.HUD_CONTACT || "mcp-fairrent (github.com/haksanlulz/mcp-fairrent)";
 const UA = `mcp-fairrent/1.0 (${CONTACT})`;
 
-// USPS crosswalk type codes (HUD): source geography -> target geography.
+// USPS crosswalk type codes (HUD; full 12-type table verified against the
+// API docs 2026-08-23). zip_crosswalk uses the ZIP->geography half; geo_to_zips
+// uses the geography->ZIP half.
 const CROSSWALK_TYPES: Record<string, number> = {
   tract: 1, // ZIP -> Census tract
   county: 2, // ZIP -> county
   cbsa: 3, // ZIP -> CBSA (metro)
+  cbsa_div: 4, // ZIP -> CBSA division
   cd: 5, // ZIP -> congressional district
+  county_sub: 11, // ZIP -> county subdivision
+};
+const REVERSE_CROSSWALK_TYPES: Record<string, number> = {
+  tract: 6, // Census tract -> ZIPs
+  county: 7, // county -> ZIPs
+  cbsa: 8, // CBSA (metro) -> ZIPs
+  cbsa_div: 9, // CBSA division -> ZIPs
+  cd: 10, // congressional district -> ZIPs
+  county_sub: 12, // county subdivision -> ZIPs
 };
 
 // HUD USER allows ~60 requests/min; space request STARTS by a fixed gap so the
@@ -73,7 +87,11 @@ async function hudGet(path: string, params: Record<string, string> = {}): Promis
       throw new Error(`HUD ${path} returned non-JSON (status ${res.status}): ${body.slice(0, 200)}`);
     }
     if (!res.ok || json.error) {
-      throw new Error(`HUD ${path} error (status ${res.status}): ${json.error ?? body.slice(0, 200)}`);
+      // json.error can be an object; stringify it rather than shipping "[object Object]".
+      const detail = json.error !== undefined
+        ? (typeof json.error === "string" ? json.error : JSON.stringify(json.error))
+        : body.slice(0, 200);
+      throw new Error(`HUD ${path} error (status ${res.status}): ${detail}`);
     }
     return json.data ?? json;
   });
@@ -126,6 +144,33 @@ function shapeIncomeLimits(data: any, size?: number) {
     extremely_low_30pct: pick(data?.extremely_low, "il30"),
     very_low_50pct: pick(data?.very_low, "il50"),
     low_80pct: pick(data?.low, "il80"),
+  };
+}
+
+// MTSP (Multifamily Tax Subsidy Projects) income limits: the LIHTC bands.
+// Nests 20/30/40/50/60/70/80percent plus the HERA special 50/60 bands, each
+// with il{pct}_p1..p8 columns (hera_special_il{pct}_pN for the HERA bands).
+function shapeMtsp(data: any, size?: number) {
+  const pick = (block: any, prefix: string) => {
+    if (!block) return undefined;
+    if (size && size >= 1 && size <= 8) return block[`${prefix}_p${size}`];
+    return Array.from({ length: 8 }, (_, i) => block[`${prefix}_p${i + 1}`]);
+  };
+  return {
+    area: data?.county_name || data?.metro_name,
+    metro_name: data?.metro_name || undefined,
+    year: data?.year,
+    median_income: data?.median_income,
+    household_size: size,
+    pct_20: pick(data?.["20percent"], "il20"),
+    pct_30: pick(data?.["30percent"], "il30"),
+    pct_40: pick(data?.["40percent"], "il40"),
+    pct_50: pick(data?.["50percent"], "il50"),
+    pct_60: pick(data?.["60percent"], "il60"),
+    pct_70: pick(data?.["70percent"], "il70"),
+    pct_80: pick(data?.["80percent"], "il80"),
+    hera_special_50: pick(data?.hera_special_50percent, "hera_special_il50"),
+    hera_special_60: pick(data?.hera_special_60percent, "hera_special_il60"),
   };
 }
 
@@ -232,9 +277,30 @@ function shapeAffordability(input: {
   return { entityid, area, rent_check, income_check };
 }
 
+/**
+ * SPEC limits-not-eligibility.
+ *
+ * Every number this server returns is a PROGRAM LINE, and the wrong reading is
+ * treating it as a personal determination. The note rides every payload (the
+ * sibling servers' pattern): FMRs are not payment standards (PHAs set those at
+ * 90-110% of FMR, and small-area ZIPs differ); income limits are the federal
+ * eligibility lines, not an award of a voucher (waitlists and preferences
+ * decide that); MTSP limits govern tax-credit buildings, not Section 8. Each
+ * answer is exactly as current as its table year.
+ */
+const ELIGIBILITY_SCOPE =
+  "HUD program tables, reproduced as published. Rent figures are Fair Market " +
+  "Rents, not a housing authority's payment standard; income figures are " +
+  "program eligibility lines, not a determination or an award. Confirm with " +
+  "the administering agency before relying on a number for a real household.";
+
+function withScope<T extends Record<string, unknown>>(result: T): T & { eligibility_scope: string } {
+  return { ...result, eligibility_scope: ELIGIBILITY_SCOPE };
+}
+
 export function createServer() {
   const server = new Server(
-    { name: "mcp-fairrent", version: "1.0.0" },
+    { name: "mcp-fairrent", version: "1.1.0" },
     { capabilities: { tools: {} } },
   );
 
@@ -292,10 +358,51 @@ export function createServer() {
           type: "object",
           properties: {
             zip: { type: "string", description: "5-digit ZIP code" },
-            to: { type: "string", description: "Target geography: county | tract | cbsa | cd (default county)" },
+            to: { type: "string", description: "Target geography: county | tract | cbsa | cbsa_div | cd | county_sub (default county)" },
             year: { type: "string", description: "Crosswalk year; default is the latest" },
           },
           required: ["zip"],
+        },
+      },
+      {
+        name: "mtsp_income_limits",
+        description:
+          "MTSP (Multifamily Tax Subsidy Projects) income limits: the bands used by LIHTC tax-credit buildings, at 20/30/40/50/60/70/80% of area median plus the HERA special bands. These are the limits that decide eligibility for tax-credit apartments, and they are NOT the same table as the Section 8 income limits (use income_limits for those). entityid is a 10-digit county FIPS or metro CBSA code, same as fmr_lookup.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            entityid: { type: "string", description: "10-digit county entity id (county FIPS + 99999) or metro CBSA code. Derive from a ZIP via zip_crosswalk then list_counties" },
+            household_size: { type: "number", description: "Family size 1-8; omit for all sizes" },
+            year: { type: "string", description: "Table year; default is the latest" },
+          },
+          required: ["entityid"],
+        },
+      },
+      {
+        name: "state_fmr_overview",
+        description:
+          "Every county's and metro area's Fair Market Rents for a whole state in ONE call (/fmr/statedata). Use this to compare areas, find where a budget reaches, or scan a region without one fmr_lookup per county. Returns metro areas and counties with all five bedroom-size FMRs and small-area status. Pass a 2-letter state code.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            state: { type: "string", description: "2-letter state code (e.g. 'NY')" },
+            year: { type: "string", description: "FMR year; default is the latest" },
+          },
+          required: ["state"],
+        },
+      },
+      {
+        name: "geo_to_zips",
+        description:
+          "The reverse crosswalk: every ZIP code inside a county, Census tract, metro (CBSA), CBSA division, congressional district, or county subdivision, with each ZIP's residential-address share. Useful for walking a district or scoping a county to mailable ZIPs. Pass the geography type and its GEOID (county = 5-digit FIPS, tract = 11-digit, cd = 4-digit, cbsa = 5-digit).",
+        inputSchema: {
+          type: "object",
+          properties: {
+            from: { type: "string", description: "Source geography: county | tract | cbsa | cbsa_div | cd | county_sub" },
+            geoid: { type: "string", description: "The geography's GEOID (e.g. county '36005', congressional district '3615')" },
+            year: { type: "string", description: "Crosswalk year; default is the latest" },
+          },
+          required: ["from", "geoid"],
         },
       },
       {
@@ -320,6 +427,16 @@ export function createServer() {
 
   server.setRequestHandler(CallToolRequestSchema, async (req) => {
     const { name, arguments: args = {} } = req.params;
+    try {
+      return await dispatch(name, args as Record<string, any>);
+    } catch (err) {
+      if (err instanceof McpError) throw err;
+      const message = err instanceof Error ? err.message : String(err);
+      return { content: [{ type: "text" as const, text: `Error: ${message}` }], isError: true };
+    }
+  });
+
+  async function dispatch(name: string, args: Record<string, any>) {
     switch (name) {
       case "fmr_lookup": {
         const id = String(args.entityid ?? "").trim();
@@ -327,7 +444,7 @@ export function createServer() {
         const params: Record<string, string> = {};
         if (args.year) params.year = String(args.year);
         const data = await hudGet(`/fmr/data/${encodeURIComponent(id)}`, params);
-        return asJson(shapeFmr(data));
+        return asJson(withScope(shapeFmr(data)));
       }
       case "income_limits": {
         const id = String(args.entityid ?? "").trim();
@@ -339,7 +456,7 @@ export function createServer() {
         const params: Record<string, string> = {};
         if (args.year) params.year = String(args.year);
         const data = await hudGet(`/il/data/${encodeURIComponent(id)}`, params);
-        return asJson(shapeIncomeLimits(data, size));
+        return asJson(withScope(shapeIncomeLimits(data, size)));
       }
       case "affordability_check": {
         const id = String(args.entityid ?? "").trim();
@@ -387,7 +504,7 @@ export function createServer() {
           hasRent ? hudGet(`/fmr/data/${encodeURIComponent(id)}`, params) : Promise.resolve(undefined),
           hasIncome ? hudGet(`/il/data/${encodeURIComponent(id)}`, params) : Promise.resolve(undefined),
         ]);
-        return asJson(shapeAffordability({ entityid: id, fmrData, ilData, rent, bedrooms, income, size }));
+        return asJson(withScope(shapeAffordability({ entityid: id, fmrData, ilData, rent, bedrooms, income, size })));
       }
       case "zip_crosswalk": {
         const zip = String(args.zip ?? "").trim();
@@ -402,11 +519,92 @@ export function createServer() {
         const data = await hudGet(`/usps`, params);
         const results = (data?.results ?? []).map((r: any) => ({
           geoid: r.geoid,
+          city: r.city,
+          state: r.state,
           res_ratio: r.res_ratio,
           bus_ratio: r.bus_ratio,
           tot_ratio: r.tot_ratio,
         }));
-        return asJson({ zip, to, matches: results });
+        return asJson(
+          withScope({
+            zip,
+            to,
+            note:
+              results.length === 0
+                ? "No crosswalk rows for that ZIP. It may be a PO-box-only or single-building ZIP with no residential addresses, or not a current USPS ZIP; verify the ZIP before concluding anything."
+                : "res_ratio is the share of the ZIP's residential addresses in each geography; the highest-share county is usually the right entityid.",
+            matches: results,
+          }),
+        );
+      }
+      case "mtsp_income_limits": {
+        const id = String(args.entityid ?? "").trim();
+        if (!id) throw new Error("entityid is required (10-digit county FIPS + 99999 or metro CBSA code)");
+        const size = args.household_size !== undefined ? Number(args.household_size) : undefined;
+        if (size !== undefined && (!Number.isInteger(size) || size < 1 || size > 8)) {
+          throw new Error("household_size must be an integer 1-8");
+        }
+        const params: Record<string, string> = {};
+        if (args.year) params.year = String(args.year);
+        const data = await hudGet(`/mtspil/data/${encodeURIComponent(id)}`, params);
+        return asJson(withScope(shapeMtsp(data, size)));
+      }
+      case "state_fmr_overview": {
+        const state = String(args.state ?? "").trim().toUpperCase();
+        if (!/^[A-Z]{2}$/.test(state)) throw new Error("state must be a 2-letter code (e.g. 'NY')");
+        const params: Record<string, string> = {};
+        if (args.year) params.year = String(args.year);
+        const data = await hudGet(`/fmr/statedata/${state}`, params);
+        const shapeRow = (r: any) => ({
+          name: r.county_name || r.name || r.town_name,
+          code: r.fips_code || r.code,
+          metro_name: r.metro_name || undefined,
+          efficiency: r.Efficiency,
+          one_br: r["One-Bedroom"],
+          two_br: r["Two-Bedroom"],
+          three_br: r["Three-Bedroom"],
+          four_br: r["Four-Bedroom"],
+          small_area_fmrs: r.smallarea_status === "1" || r.smallarea_status === 1,
+        });
+        return asJson(
+          withScope({
+            state,
+            year: data?.year,
+            metro_areas: (data?.metroareas ?? []).map(shapeRow),
+            counties: (data?.counties ?? []).map(shapeRow),
+          }),
+        );
+      }
+      case "geo_to_zips": {
+        const from = String(args.from ?? "").toLowerCase();
+        if (!Object.prototype.hasOwnProperty.call(REVERSE_CROSSWALK_TYPES, from)) {
+          throw new Error(`unknown source geography '${from}'; use one of: ${Object.keys(REVERSE_CROSSWALK_TYPES).join(", ")}`);
+        }
+        const geoid = String(args.geoid ?? "").trim();
+        if (!/^\d{2,11}$/.test(geoid)) throw new Error("geoid must be the geography's numeric GEOID (2-11 digits)");
+        const params: Record<string, string> = { type: String(REVERSE_CROSSWALK_TYPES[from]), query: geoid };
+        if (args.year) params.year = String(args.year);
+        const data = await hudGet(`/usps`, params);
+        const results = (data?.results ?? []).map((r: any) => ({
+          zip: r.zip ?? r.geoid,
+          city: r.city,
+          state: r.state,
+          res_ratio: r.res_ratio,
+          bus_ratio: r.bus_ratio,
+          tot_ratio: r.tot_ratio,
+        }));
+        return asJson(
+          withScope({
+            from,
+            geoid,
+            zip_count: results.length,
+            note:
+              results.length === 0
+                ? "No ZIPs matched. Check the GEOID length for the geography type (county = 5-digit FIPS, tract = 11-digit, congressional district = 4-digit state+district)."
+                : "res_ratio is the share of the geography's residential addresses in that ZIP.",
+            zips: results,
+          }),
+        );
       }
       case "list_counties": {
         const state = String(args.state ?? "").trim().toUpperCase();
@@ -417,7 +615,7 @@ export function createServer() {
           fips_code: c.fips_code,
           state_code: c.state_code,
         }));
-        return asJson({ state, counties });
+        return asJson(withScope({ state, counties }));
       }
       case "list_metro_areas": {
         const data = await hudGet(`/fmr/listMetroAreas`);
@@ -426,12 +624,12 @@ export function createServer() {
           area_name: m.area_name,
           category: m.category,
         }));
-        return asJson({ metros });
+        return asJson(withScope({ metros }));
       }
       default:
-        throw new Error(`Unknown tool: ${name}`);
+        throw new McpError(ErrorCode.MethodNotFound, `Unknown tool: ${name}`);
     }
-  });
+  }
 
   return server;
 }

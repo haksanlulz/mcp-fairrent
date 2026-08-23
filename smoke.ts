@@ -55,5 +55,11 @@ if (bronxFips) {
   console.error("FAIL fmr_lookup/income_limits/affordability_check: could not resolve a Bronx FIPS from list_counties");
 }
 
+if (bronxFips) {
+  await check("mtsp_income_limits", { entityid: bronxFips, household_size: 3 }, (b) => b.pct_60 !== undefined || b.pct_50 !== undefined);
+}
+await check("state_fmr_overview", { state: "NY" }, (b) => Array.isArray(b.counties) && b.counties.length > 0);
+await check("geo_to_zips", { from: "county", geoid: "36005" }, (b) => Array.isArray(b.zips) && b.zips.length > 0 && b.zips[0].zip);
+
 console.log(failed === 0 ? "smoke: all passed" : `smoke: ${failed} FAILED`);
 process.exit(failed === 0 ? 0 : 1);

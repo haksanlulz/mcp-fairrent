@@ -79,15 +79,18 @@ describe("mcp-fairrent server", () => {
     vi.unstubAllGlobals();
   });
 
-  it("exposes all six tools", async () => {
+  it("exposes all nine tools", async () => {
     const client = await connect();
     const { tools } = await client.listTools();
     expect(tools.map((t) => t.name).sort()).toEqual([
       "affordability_check",
       "fmr_lookup",
+      "geo_to_zips",
       "income_limits",
       "list_counties",
       "list_metro_areas",
+      "mtsp_income_limits",
+      "state_fmr_overview",
       "zip_crosswalk",
     ]);
   });
@@ -164,9 +167,11 @@ describe("mcp-fairrent server", () => {
   it("income_limits rejects an out-of-range household size", async () => {
     vi.stubEnv("HUD_API_TOKEN", "test-token");
     const client = await connect();
-    await expect(
-      client.callTool({ name: "income_limits", arguments: { entityid: "x", household_size: 9 } }),
-    ).rejects.toThrow(/1-8/);
+    {
+      const res: any = await client.callTool({ name: "income_limits", arguments: { entityid: "x", household_size: 9 } });
+      expect(res.isError).toBe(true);
+      expect(res.content[0].text).toMatch(/1-8/);
+    }
   });
 
   it("zip_crosswalk maps 'county' to type=2 and shapes the ratios", async () => {
@@ -187,12 +192,16 @@ describe("mcp-fairrent server", () => {
   it("zip_crosswalk rejects a non-5-digit ZIP and an unknown target", async () => {
     vi.stubEnv("HUD_API_TOKEN", "test-token");
     const client = await connect();
-    await expect(
-      client.callTool({ name: "zip_crosswalk", arguments: { zip: "1045" } }),
-    ).rejects.toThrow(/5-digit/);
-    await expect(
-      client.callTool({ name: "zip_crosswalk", arguments: { zip: "10451", to: "planet" } }),
-    ).rejects.toThrow(/unknown target/);
+    {
+      const res: any = await client.callTool({ name: "zip_crosswalk", arguments: { zip: "1045" } });
+      expect(res.isError).toBe(true);
+      expect(res.content[0].text).toMatch(/5-digit/);
+    }
+    {
+      const res: any = await client.callTool({ name: "zip_crosswalk", arguments: { zip: "10451", to: "planet" } });
+      expect(res.isError).toBe(true);
+      expect(res.content[0].text).toMatch(/unknown target/);
+    }
   });
 
   it("list_counties shapes county rows", async () => {
@@ -210,18 +219,22 @@ describe("mcp-fairrent server", () => {
   it("tools fail with a get-a-token hint when HUD_API_TOKEN is unset", async () => {
     vi.stubEnv("HUD_API_TOKEN", "");
     const client = await connect();
-    await expect(
-      client.callTool({ name: "fmr_lookup", arguments: { entityid: "NY" } }),
-    ).rejects.toThrow(/huduser\.gov/);
+    {
+      const res: any = await client.callTool({ name: "fmr_lookup", arguments: { entityid: "NY" } });
+      expect(res.isError).toBe(true);
+      expect(res.content[0].text).toMatch(/huduser\.gov/);
+    }
   });
 
   it("surfaces a HUD error body instead of returning junk", async () => {
     vi.stubEnv("HUD_API_TOKEN", "test-token");
     vi.stubGlobal("fetch", mockFetch({ error: "Unauthenticated" }, 401));
     const client = await connect();
-    await expect(
-      client.callTool({ name: "fmr_lookup", arguments: { entityid: "NY" } }),
-    ).rejects.toThrow(/Unauthenticated/);
+    {
+      const res: any = await client.callTool({ name: "fmr_lookup", arguments: { entityid: "NY" } });
+      expect(res.isError).toBe(true);
+      expect(res.content[0].text).toMatch(/Unauthenticated/);
+    }
   });
 
   it("fmr_lookup array rows fall back to the top-level year", async () => {
@@ -466,15 +479,21 @@ describe("mcp-fairrent server", () => {
       const fetchMock = BOTH();
       vi.stubGlobal("fetch", fetchMock);
       const client = await connect();
-      await expect(
-        client.callTool({ name: "affordability_check", arguments: { entityid: "3600599999" } }),
-      ).rejects.toThrow(/nothing to check/);
-      await expect(
-        client.callTool({ name: "affordability_check", arguments: { entityid: "3600599999", rent: 2600 } }),
-      ).rejects.toThrow(/bedrooms/);
-      await expect(
-        client.callTool({ name: "affordability_check", arguments: { entityid: "3600599999", income: 48000 } }),
-      ).rejects.toThrow(/household_size/);
+      {
+      const res: any = await client.callTool({ name: "affordability_check", arguments: { entityid: "3600599999" } });
+      expect(res.isError).toBe(true);
+      expect(res.content[0].text).toMatch(/nothing to check/);
+    }
+      {
+      const res: any = await client.callTool({ name: "affordability_check", arguments: { entityid: "3600599999", rent: 2600 } });
+      expect(res.isError).toBe(true);
+      expect(res.content[0].text).toMatch(/bedrooms/);
+    }
+      {
+      const res: any = await client.callTool({ name: "affordability_check", arguments: { entityid: "3600599999", income: 48000 } });
+      expect(res.isError).toBe(true);
+      expect(res.content[0].text).toMatch(/household_size/);
+    }
       expect(fetchMock).not.toHaveBeenCalled(); // validation fires before any HUD call
     });
 
@@ -483,18 +502,26 @@ describe("mcp-fairrent server", () => {
       const fetchMock = BOTH();
       vi.stubGlobal("fetch", fetchMock);
       const client = await connect();
-      await expect(
-        client.callTool({ name: "affordability_check", arguments: { entityid: "x", rent: 2600, bedrooms: 5 } }),
-      ).rejects.toThrow(/0-4/);
-      await expect(
-        client.callTool({ name: "affordability_check", arguments: { entityid: "x", rent: 2600, bedrooms: 2.5 } }),
-      ).rejects.toThrow(/0-4/);
-      await expect(
-        client.callTool({ name: "affordability_check", arguments: { entityid: "x", income: 48000, household_size: 9 } }),
-      ).rejects.toThrow(/1-8/);
-      await expect(
-        client.callTool({ name: "affordability_check", arguments: { entityid: "x", income: 48000, household_size: 0 } }),
-      ).rejects.toThrow(/1-8/);
+      {
+      const res: any = await client.callTool({ name: "affordability_check", arguments: { entityid: "x", rent: 2600, bedrooms: 5 } });
+      expect(res.isError).toBe(true);
+      expect(res.content[0].text).toMatch(/0-4/);
+    }
+      {
+      const res: any = await client.callTool({ name: "affordability_check", arguments: { entityid: "x", rent: 2600, bedrooms: 2.5 } });
+      expect(res.isError).toBe(true);
+      expect(res.content[0].text).toMatch(/0-4/);
+    }
+      {
+      const res: any = await client.callTool({ name: "affordability_check", arguments: { entityid: "x", income: 48000, household_size: 9 } });
+      expect(res.isError).toBe(true);
+      expect(res.content[0].text).toMatch(/1-8/);
+    }
+      {
+      const res: any = await client.callTool({ name: "affordability_check", arguments: { entityid: "x", income: 48000, household_size: 0 } });
+      expect(res.isError).toBe(true);
+      expect(res.content[0].text).toMatch(/1-8/);
+    }
       expect(fetchMock).not.toHaveBeenCalled();
     });
 
@@ -503,15 +530,21 @@ describe("mcp-fairrent server", () => {
       const fetchMock = BOTH();
       vi.stubGlobal("fetch", fetchMock);
       const client = await connect();
-      await expect(
-        client.callTool({ name: "affordability_check", arguments: { entityid: "x", rent: 0, bedrooms: 2 } }),
-      ).rejects.toThrow(/rent/);
-      await expect(
-        client.callTool({ name: "affordability_check", arguments: { entityid: "x", rent: -100, bedrooms: 2 } }),
-      ).rejects.toThrow(/rent/);
-      await expect(
-        client.callTool({ name: "affordability_check", arguments: { entityid: "x", income: -1, household_size: 3 } }),
-      ).rejects.toThrow(/income/);
+      {
+      const res: any = await client.callTool({ name: "affordability_check", arguments: { entityid: "x", rent: 0, bedrooms: 2 } });
+      expect(res.isError).toBe(true);
+      expect(res.content[0].text).toMatch(/rent/);
+    }
+      {
+      const res: any = await client.callTool({ name: "affordability_check", arguments: { entityid: "x", rent: -100, bedrooms: 2 } });
+      expect(res.isError).toBe(true);
+      expect(res.content[0].text).toMatch(/rent/);
+    }
+      {
+      const res: any = await client.callTool({ name: "affordability_check", arguments: { entityid: "x", income: -1, household_size: 3 } });
+      expect(res.isError).toBe(true);
+      expect(res.content[0].text).toMatch(/income/);
+    }
       expect(fetchMock).not.toHaveBeenCalled();
     });
 
@@ -522,9 +555,11 @@ describe("mcp-fairrent server", () => {
         mockFetch({ data: { metro_name: "M", metro_status: "1", smallarea_status: "1", year: "2026", basicdata: [{ zip_code: "10451", "Two-Bedroom": "2213.0" }] } }),
       );
       const client = await connect();
-      await expect(
-        client.callTool({ name: "affordability_check", arguments: { entityid: "METRO123", rent: 2600, bedrooms: 2 } }),
-      ).rejects.toThrow(/county entityid/);
+      {
+      const res: any = await client.callTool({ name: "affordability_check", arguments: { entityid: "METRO123", rent: 2600, bedrooms: 2 } });
+      expect(res.isError).toBe(true);
+      expect(res.content[0].text).toMatch(/county entityid/);
+    }
     });
 
     it("errors on holes in the tables instead of comparing against NaN", async () => {
@@ -535,12 +570,16 @@ describe("mcp-fairrent server", () => {
         ["/il/data/", { data: { county_name: "Bronx County", year: "2026", very_low: {}, extremely_low: {}, low: {} } }],
       ]));
       const client = await connect();
-      await expect(
-        client.callTool({ name: "affordability_check", arguments: { entityid: "3600599999", rent: 2600, bedrooms: 4 } }),
-      ).rejects.toThrow(/four-bedroom/);
-      await expect(
-        client.callTool({ name: "affordability_check", arguments: { entityid: "3600599999", income: 48000, household_size: 3 } }),
-      ).rejects.toThrow(/3-person/);
+      {
+      const res: any = await client.callTool({ name: "affordability_check", arguments: { entityid: "3600599999", rent: 2600, bedrooms: 4 } });
+      expect(res.isError).toBe(true);
+      expect(res.content[0].text).toMatch(/four-bedroom/);
+    }
+      {
+      const res: any = await client.callTool({ name: "affordability_check", arguments: { entityid: "3600599999", income: 48000, household_size: 3 } });
+      expect(res.isError).toBe(true);
+      expect(res.content[0].text).toMatch(/3-person/);
+    }
     });
 
     it("passes the year param through to both endpoints", async () => {
@@ -594,4 +633,151 @@ describe("SPEC qualification-never-overstates", () => {
     expect((await at(54851)).categories.very_low_50pct.qualifies).toBe(false);
     expect((await at(87751)).categories.low_80pct.qualifies).toBe(false);
   });
+});
+
+describe("fairrent 1.1.0", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
+  });
+
+// ---------------------------------------------------------------------------
+// 1.1.0: mtsp_income_limits, state_fmr_overview, geo_to_zips, scope notes,
+// error-shape parity with the sibling servers
+// ---------------------------------------------------------------------------
+
+const MTSP_PAYLOAD = {
+  data: {
+    county_name: "Bronx County",
+    metro_name: "New York, NY HUD Metro FMR Area",
+    year: "2026",
+    median_income: "97800",
+    "50percent": { il50_p1: "42650", il50_p2: "48750", il50_p3: "54850", il50_p4: "60900", il50_p5: "65800", il50_p6: "70650", il50_p7: "75550", il50_p8: "80400" },
+    "60percent": { il60_p1: "51180", il60_p2: "58500", il60_p3: "65820", il60_p4: "73080", il60_p5: "78960", il60_p6: "84780", il60_p7: "90660", il60_p8: "96480" },
+    hera_special_60percent: { hera_special_il60_p1: "52000", hera_special_il60_p2: "59400", hera_special_il60_p3: "66840", hera_special_il60_p4: "74220", hera_special_il60_p5: "80160", hera_special_il60_p6: "86100", hera_special_il60_p7: "92040", hera_special_il60_p8: "97980" },
+  },
+};
+
+const STATEDATA_PAYLOAD = {
+  data: {
+    year: "2026",
+    metroareas: [
+      { code: "METRO35620M35620", name: "New York-White Plains", state_code: "NY", Efficiency: "1875", "One-Bedroom": "1945", "Two-Bedroom": "2213", "Three-Bedroom": "2818", "Four-Bedroom": "3015", smallarea_status: "1" },
+    ],
+    counties: [
+      { county_name: "Albany County", fips_code: "3600199999", metro_name: "Albany-Schenectady-Troy", Efficiency: "900", "One-Bedroom": "1000", "Two-Bedroom": "1200", "Three-Bedroom": "1500", "Four-Bedroom": "1700", smallarea_status: "0" },
+    ],
+  },
+};
+
+const REVERSE_CROSSWALK_PAYLOAD = {
+  data: {
+    year: "2026",
+    quarter: "1",
+    input: "36005",
+    crosswalk_type: "county-zip",
+    results: [
+      { zip: "10451", city: "BRONX", state: "NY", res_ratio: "0.05", bus_ratio: "0.04", oth_ratio: "0.05", tot_ratio: "0.05" },
+      { zip: "10452", city: "BRONX", state: "NY", res_ratio: "0.07", bus_ratio: "0.03", oth_ratio: "0.06", tot_ratio: "0.06" },
+    ],
+  },
+};
+
+describe("mtsp_income_limits", () => {
+  it("hits /mtspil/data and shapes the LIHTC bands including HERA special", async () => {
+    vi.stubEnv("HUD_API_TOKEN", "test-token");
+    const fetchMock = mockFetch(MTSP_PAYLOAD);
+    vi.stubGlobal("fetch", fetchMock);
+    const client = await connect();
+    const body = bodyOf(await client.callTool({ name: "mtsp_income_limits", arguments: { entityid: "3600599999", household_size: 2 } }));
+    const url = String(fetchMock.mock.calls[0][0]);
+    expect(url).toContain("/mtspil/data/3600599999");
+    expect(body.pct_50).toBe("48750");
+    expect(body.pct_60).toBe("58500");
+    expect(body.hera_special_60).toBe("59400");
+    expect(body.eligibility_scope).toContain("not a determination");
+  });
+
+  it("rejects a bad household size before any network call", async () => {
+    vi.stubEnv("HUD_API_TOKEN", "test-token");
+    const fetchMock = mockFetch(MTSP_PAYLOAD);
+    vi.stubGlobal("fetch", fetchMock);
+    const client = await connect();
+    const res: any = await client.callTool({ name: "mtsp_income_limits", arguments: { entityid: "x", household_size: 12 } });
+    expect(res.isError).toBe(true);
+    expect(res.content[0].text).toContain("1-8");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("state_fmr_overview", () => {
+  it("returns every metro and county for a state in one call", async () => {
+    vi.stubEnv("HUD_API_TOKEN", "test-token");
+    const fetchMock = mockFetch(STATEDATA_PAYLOAD);
+    vi.stubGlobal("fetch", fetchMock);
+    const client = await connect();
+    const body = bodyOf(await client.callTool({ name: "state_fmr_overview", arguments: { state: "ny" } }));
+    expect(String(fetchMock.mock.calls[0][0])).toContain("/fmr/statedata/NY");
+    expect(body.metro_areas[0].small_area_fmrs).toBe(true);
+    expect(body.counties[0].name).toBe("Albany County");
+    expect(body.counties[0].two_br).toBe("1200");
+    expect(body.eligibility_scope).toBeDefined();
+  });
+});
+
+describe("geo_to_zips", () => {
+  it("uses the reverse crosswalk type code and carries city/state per ZIP", async () => {
+    vi.stubEnv("HUD_API_TOKEN", "test-token");
+    const fetchMock = mockFetch(REVERSE_CROSSWALK_PAYLOAD);
+    vi.stubGlobal("fetch", fetchMock);
+    const client = await connect();
+    const body = bodyOf(await client.callTool({ name: "geo_to_zips", arguments: { from: "county", geoid: "36005" } }));
+    const url = String(fetchMock.mock.calls[0][0]);
+    expect(url).toContain("type=7"); // county -> zip, per HUD's 12-type table
+    expect(url).toContain("query=36005");
+    expect(body.zip_count).toBe(2);
+    expect(body.zips[0].city).toBe("BRONX");
+    expect(String(body.note)).toContain("res_ratio");
+  });
+
+  it("rejects an unknown source geography with the valid list", async () => {
+    vi.stubEnv("HUD_API_TOKEN", "test-token");
+    vi.stubGlobal("fetch", mockFetch(REVERSE_CROSSWALK_PAYLOAD));
+    const client = await connect();
+    const res: any = await client.callTool({ name: "geo_to_zips", arguments: { from: "planet", geoid: "1" } });
+    expect(res.isError).toBe(true);
+    expect(res.content[0].text).toContain("tract, county");
+  });
+});
+
+describe("sibling-standard hardening", () => {
+  it("a handler error returns isError content, not a protocol error", async () => {
+    vi.stubEnv("HUD_API_TOKEN", "test-token");
+    vi.stubGlobal("fetch", mockFetch({ error: "quota exceeded" }, 429));
+    const client = await connect();
+    const res: any = await client.callTool({ name: "fmr_lookup", arguments: { entityid: "3600599999" } });
+    expect(res.isError).toBe(true);
+    expect(res.content[0].text).toContain("Error:");
+    expect(res.content[0].text).toContain("quota exceeded");
+  });
+
+  it("zip_crosswalk carries city/state and an empty result explains itself", async () => {
+    vi.stubEnv("HUD_API_TOKEN", "test-token");
+    vi.stubGlobal("fetch", mockFetch({ data: { results: [] } }));
+    const client = await connect();
+    const body = bodyOf(await client.callTool({ name: "zip_crosswalk", arguments: { zip: "99999" } }));
+    expect(body.matches).toEqual([]);
+    expect(String(body.note)).toContain("PO-box");
+    expect(body.eligibility_scope).toBeDefined();
+  });
+
+  it("every eligibility verdict rides the scope note", async () => {
+    vi.stubEnv("HUD_API_TOKEN", "test-token");
+    vi.stubGlobal("fetch", mockFetch(IL_PAYLOAD));
+    const client = await connect();
+    const body = bodyOf(await client.callTool({ name: "income_limits", arguments: { entityid: "3600599999" } }));
+    expect(body.eligibility_scope).toContain("eligibility lines");
+  });
+});
+
 });
