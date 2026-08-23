@@ -1,6 +1,6 @@
 # mcp-fairrent
 
-MCP server for HUD housing data. Looks up Fair Market Rents by bedroom count, Section 8 income limits by household size, and the USPS ZIP-to-jurisdiction crosswalk that maps a ZIP to its county. Built on the [MCP TypeScript SDK](https://modelcontextprotocol.io).
+MCP server for HUD housing data. Fair Market Rents by bedroom count (per area or a whole state at once), Section 8 income limits by household size, the LIHTC/MTSP income bands tax-credit buildings use, computed affordability verdicts, and the USPS ZIP-to-jurisdiction crosswalk in both directions (ZIP to county/tract/metro/district, and any of those back to its ZIPs). Built on the [MCP TypeScript SDK](https://modelcontextprotocol.io).
 
 For anyone answering "is this rent affordable here, and who qualifies for help?": tenant organizers, legal-aid intake, housing counselors, relocation planners, and agents that need real HUD numbers.
 
@@ -75,11 +75,15 @@ Worked example: *a Bronx landlord wants $2,600 for a 2-bedroom. Is that above Fa
 {
   "zip": "10451",
   "to": "county",
+  "note": "res_ratio is the share of the ZIP's residential addresses in each geography; the highest-share county is usually the right entityid.",
   "matches": [
-    { "geoid": "36005", "res_ratio": "1.0", "bus_ratio": "1.0", "tot_ratio": "1.0" }
-  ]
+    { "geoid": "36005", "city": "BRONX", "state": "NY", "res_ratio": 1, "bus_ratio": 1, "tot_ratio": 1 }
+  ],
+  "eligibility_scope": "HUD program tables, reproduced as published. Rent figures are Fair Market Rents, not a housing authority's payment standard; income figures are program eligibility lines, not a determination or an award. Confirm with the administering agency before relying on a number for a real household."
 }
 ```
+
+Ratios are rounded to four decimal places. A ZIP with no crosswalk rows (retired, or PO-box-only) answers with an empty `matches` and a note saying so — it is an answer, not an error.
 
 `36005` is Bronx County; `list_counties` with `state: "NY"` gives its entity id `3600599999`, which `fmr_lookup` and `income_limits` take.
 
@@ -89,6 +93,7 @@ Worked example: *a Bronx landlord wants $2,600 for a 2-bedroom. Is that above Fa
 - HUD's tables bound the inputs: bedrooms 0-4 (FMR tables stop at four bedrooms), household size 1-8 (income-limit tables stop at eight; `affordability_check`'s error gives HUD's convention for larger households).
 - `affordability_check` compares a single FMR row. Areas whose FMR data comes back multi-row (small-area/ZIP-level, or multi-year) are refused — pass a county entityid, or use `fmr_lookup` to see every row.
 - FMR is not the voucher ceiling: housing authorities set payment standards at 90-110% of FMR (24 CFR 982.503). The rent verdict carries this note.
+- Every response carries an `eligibility_scope` note: these are program lines, not personal determinations, and an answer is exactly as current as its table year.
 
 ## Develop
 
