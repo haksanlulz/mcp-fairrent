@@ -61,6 +61,50 @@ function throttled<T>(fn: () => Promise<T>): Promise<T> {
   return run;
 }
 
+// HUD's endpoint is public and shared, so a 429 or a 5xx is a "come back", not a
+// verdict. Ported from mcp-housing, which learned this the expensive way: with no
+// retry, most sweeps came back PARTIAL and a downstream baseline never advanced.
+//
+// Retried: 429, 5xx, and transport errors (abort, reset, garbled body). NOT
+// retried: other 4xx -- a bad ZIP or a missing token is our mistake, and repeating
+// it just spends the 60/min budget to be told twice.
+//
+// Each attempt goes back through throttled(), so the 150ms floor holds across
+// retries. RETRY_DEADLINE_MS bounds total wall-clock per request: an MCP client
+// has its own call timeout, and three stacked 15s timeouts would blow past it.
+class HttpError extends Error {
+  constructor(message: string, readonly status: number) {
+    super(message);
+  }
+}
+
+const HTTP_ATTEMPTS = Number(process.env.HUD_HTTP_ATTEMPTS ?? 3);
+const RETRY_BACKOFF_MS = [500, 2000];
+const RETRY_DEADLINE_MS = 40_000;
+const HTTP_TIMEOUT_MS = 15_000;
+
+function isRetryable(e: unknown): boolean {
+  if (e instanceof HttpError) return e.status === 429 || e.status >= 500;
+  return true; // transport error, abort, or non-JSON body
+}
+
+async function withRetry<T>(fn: () => Promise<T>): Promise<T> {
+  const started = Date.now();
+  let last: unknown;
+  for (let attempt = 0; attempt < HTTP_ATTEMPTS; attempt++) {
+    try {
+      return await throttled(fn);
+    } catch (e) {
+      last = e;
+      if (attempt === HTTP_ATTEMPTS - 1 || !isRetryable(e)) break;
+      const backoff = RETRY_BACKOFF_MS[attempt] ?? 2000;
+      if (Date.now() - started + backoff + HTTP_TIMEOUT_MS > RETRY_DEADLINE_MS) break;
+      await new Promise((r) => setTimeout(r, backoff));
+    }
+  }
+  throw last;
+}
+
 function token(): string {
   const t = process.env.HUD_API_TOKEN;
   if (!t) {
@@ -72,12 +116,12 @@ function token(): string {
 }
 
 async function hudGet(path: string, params: Record<string, string> = {}): Promise<any> {
-  return throttled(async () => {
+  return withRetry(async () => {
     const qs = new URLSearchParams(params);
     const url = `${HUD_API}${path}${qs.toString() ? `?${qs}` : ""}`;
     const res = await fetch(url, {
       headers: { Accept: "application/json", "User-Agent": UA, Authorization: `Bearer ${token()}` },
-      signal: AbortSignal.timeout(15_000),
+      signal: AbortSignal.timeout(HTTP_TIMEOUT_MS),
     });
     const body = await res.text();
     let json: any;
@@ -91,7 +135,7 @@ async function hudGet(path: string, params: Record<string, string> = {}): Promis
       const detail = json.error !== undefined
         ? (typeof json.error === "string" ? json.error : JSON.stringify(json.error))
         : body.slice(0, 200);
-      throw new Error(`HUD ${path} error (status ${res.status}): ${detail}`);
+      throw new HttpError(`HUD ${path} error (status ${res.status}): ${detail}`, res.status);
     }
     return json.data ?? json;
   });

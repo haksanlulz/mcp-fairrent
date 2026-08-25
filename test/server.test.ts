@@ -799,3 +799,40 @@ describe("sibling-standard hardening", () => {
 });
 
 });
+
+describe("transient-failure retry", () => {
+  // HUD's endpoint is shared and public, so a 429 or 5xx means "come back", not
+  // "no". These pin what must and must not be retried -- retry-everything would
+  // spend the 60/min budget re-asking a question already answered.
+  it("retries a 5xx and succeeds on the next attempt", async () => {
+    let n = 0;
+    const flaky = vi.fn(async () => {
+      n++;
+      return n === 1
+        ? new Response(JSON.stringify({ error: "upstream" }), { status: 503, headers: { "content-type": "application/json" } })
+        : new Response(JSON.stringify({ data: { basicdata: [{ zip_code: "10451", Efficiency: 1, "One-Bedroom": 2 }] } }), { status: 200, headers: { "content-type": "application/json" } });
+    });
+    vi.stubGlobal("fetch", flaky);
+    const client = await connect();
+    await client.callTool({ name: "fmr_lookup", arguments: { entityid: "3600599999" } });
+    expect(flaky).toHaveBeenCalledTimes(2);
+  });
+
+  it("does NOT retry a 404", async () => {
+    const miss = mockFetch({ error: "not found" }, 404);
+    vi.stubGlobal("fetch", miss);
+    const client = await connect();
+    const res: any = await client.callTool({ name: "fmr_lookup", arguments: { entityid: "3600599999" } });
+    expect(res.isError).toBe(true);
+    expect(miss).toHaveBeenCalledTimes(1);
+  });
+
+  it("retries a 429, since that one means slow down", async () => {
+    const busy = mockFetch({ error: "rate limited" }, 429);
+    vi.stubGlobal("fetch", busy);
+    const client = await connect();
+    const res: any = await client.callTool({ name: "fmr_lookup", arguments: { entityid: "3600599999" } });
+    expect(res.isError).toBe(true);
+    expect(busy).toHaveBeenCalledTimes(3);
+  });
+});
