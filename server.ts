@@ -120,7 +120,55 @@ function token(): string {
   return t;
 }
 
+// HUD publishes Fair Market Rents and income limits on an ANNUAL cycle, so a
+// repeat lookup inside a session is asking a question whose answer changes once
+// a year. A day is therefore a conservative TTL, not an aggressive one, and the
+// process is short-lived anyway.
+//
+// In memory, LRU-bounded, successful reads only: caching an error would pin a
+// transient failure for the life of the process. HUD_CACHE_TTL_MS=0 disables it.
+const CACHE_TTL_MS = Number(process.env.HUD_CACHE_TTL_MS ?? 24 * 60 * 60 * 1000);
+const CACHE_MAX = Number(process.env.HUD_CACHE_MAX ?? 300);
+const cache = new Map<string, { at: number; value: any }>();
+
+function cacheGet(key: string): any | undefined {
+  if (CACHE_TTL_MS <= 0) return undefined;
+  const hit = cache.get(key);
+  if (!hit) return undefined;
+  if (Date.now() - hit.at > CACHE_TTL_MS) {
+    cache.delete(key);
+    return undefined;
+  }
+  cache.delete(key); // re-insert so Map order is LRU
+  cache.set(key, hit);
+  return hit.value;
+}
+
+function cacheSet(key: string, value: any): void {
+  if (CACHE_TTL_MS <= 0) return;
+  cache.set(key, { at: Date.now(), value });
+  while (cache.size > CACHE_MAX) {
+    const oldest = cache.keys().next();
+    if (oldest.done) break;
+    cache.delete(oldest.value);
+  }
+}
+
+/** Exported for tests: a cache that cannot be cleared makes the suite order-dependent. */
+export function clearHudCache(): void {
+  cache.clear();
+}
+
 async function hudGet(path: string, params: Record<string, string> = {}): Promise<any> {
+  const key = `${path}?${JSON.stringify(params)}`;
+  const hit = cacheGet(key);
+  if (hit !== undefined) return hit;
+  const value = await hudGetOnce(path, params);
+  cacheSet(key, value);
+  return value;
+}
+
+async function hudGetOnce(path: string, params: Record<string, string> = {}): Promise<any> {
   return withRetry(async () => {
     const qs = new URLSearchParams(params);
     const url = `${HUD_API}${path}${qs.toString() ? `?${qs}` : ""}`;

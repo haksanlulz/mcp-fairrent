@@ -1,7 +1,7 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import { createServer, REQUEST_GAP_MS } from "../server";
+import { createServer, REQUEST_GAP_MS, clearHudCache } from "../server";
 
 async function connect(): Promise<Client> {
   const server = createServer();
@@ -10,6 +10,10 @@ async function connect(): Promise<Client> {
   await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
   return client;
 }
+
+// The response cache lives for the process; without this a value cached by one
+// test is served to the next and the suite becomes order-dependent.
+beforeEach(() => clearHudCache());
 
 function mockFetch(payload: unknown, status = 200) {
   return vi.fn(async () =>
@@ -834,5 +838,40 @@ describe("transient-failure retry", () => {
     const res: any = await client.callTool({ name: "fmr_lookup", arguments: { entityid: "3600599999" } });
     expect(res.isError).toBe(true);
     expect(busy).toHaveBeenCalledTimes(3);
+  });
+});
+
+describe("response cache", () => {
+  // HUD publishes FMR on an annual cycle, so a repeat lookup in one session
+  // cannot have a different answer.
+  it("serves a repeated lookup without a second request", async () => {
+    const f = mockFetch({ data: { basicdata: [{ zip_code: "10451", Efficiency: 1, "One-Bedroom": 2 }] } });
+    vi.stubGlobal("fetch", f);
+    const client = await connect();
+    await client.callTool({ name: "fmr_lookup", arguments: { entityid: "3600599999" } });
+    await client.callTool({ name: "fmr_lookup", arguments: { entityid: "3600599999" } });
+    expect(f).toHaveBeenCalledTimes(1);
+  });
+
+  it("treats different params as different keys", async () => {
+    const f = mockFetch({ data: { basicdata: [{ zip_code: "10451", Efficiency: 1, "One-Bedroom": 2 }] } });
+    vi.stubGlobal("fetch", f);
+    const client = await connect();
+    await client.callTool({ name: "fmr_lookup", arguments: { entityid: "3600599999" } });
+    await client.callTool({ name: "fmr_lookup", arguments: { entityid: "3600199999" } });
+    expect(f).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not cache a failure", async () => {
+    const bad = mockFetch({ error: "boom" }, 500);
+    vi.stubGlobal("fetch", bad);
+    const client = await connect();
+    const r1: any = await client.callTool({ name: "fmr_lookup", arguments: { entityid: "3600599999" } });
+    expect(r1.isError).toBe(true);
+    const good = mockFetch({ data: { basicdata: [{ zip_code: "10451", Efficiency: 1, "One-Bedroom": 2 }] } });
+    vi.stubGlobal("fetch", good);
+    const r2: any = await client.callTool({ name: "fmr_lookup", arguments: { entityid: "3600599999" } });
+    expect(r2.isError).toBeFalsy();
+    expect(good).toHaveBeenCalled();
   });
 });
