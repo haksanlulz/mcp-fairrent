@@ -809,6 +809,7 @@ describe("transient-failure retry", () => {
   // "no". These pin what must and must not be retried -- retry-everything would
   // spend the 60/min budget re-asking a question already answered.
   it("retries a 5xx and succeeds on the next attempt", async () => {
+    vi.stubEnv("HUD_API_TOKEN", "test-token");
     let n = 0;
     const flaky = vi.fn(async () => {
       n++;
@@ -823,6 +824,7 @@ describe("transient-failure retry", () => {
   });
 
   it("does NOT retry a 404", async () => {
+    vi.stubEnv("HUD_API_TOKEN", "test-token");
     const miss = mockFetch({ error: "not found" }, 404);
     vi.stubGlobal("fetch", miss);
     const client = await connect();
@@ -832,6 +834,7 @@ describe("transient-failure retry", () => {
   });
 
   it("retries a 429, since that one means slow down", async () => {
+    vi.stubEnv("HUD_API_TOKEN", "test-token");
     const busy = mockFetch({ error: "rate limited" }, 429);
     vi.stubGlobal("fetch", busy);
     const client = await connect();
@@ -845,6 +848,7 @@ describe("response cache", () => {
   // HUD publishes FMR on an annual cycle, so a repeat lookup in one session
   // cannot have a different answer.
   it("serves a repeated lookup without a second request", async () => {
+    vi.stubEnv("HUD_API_TOKEN", "test-token");
     const f = mockFetch({ data: { basicdata: [{ zip_code: "10451", Efficiency: 1, "One-Bedroom": 2 }] } });
     vi.stubGlobal("fetch", f);
     const client = await connect();
@@ -854,6 +858,7 @@ describe("response cache", () => {
   });
 
   it("treats different params as different keys", async () => {
+    vi.stubEnv("HUD_API_TOKEN", "test-token");
     // Same entityid so the PATH is identical; only `year` differs, which lands in
     // params. An earlier version of this test varied the entityid instead, which
     // varies the path -- so a key built from the path alone still passed it. Fault
@@ -867,6 +872,7 @@ describe("response cache", () => {
   });
 
   it("does not cache a failure", async () => {
+    vi.stubEnv("HUD_API_TOKEN", "test-token");
     const bad = mockFetch({ error: "boom" }, 500);
     vi.stubGlobal("fetch", bad);
     const client = await connect();
