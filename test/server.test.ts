@@ -854,11 +854,15 @@ describe("response cache", () => {
   });
 
   it("treats different params as different keys", async () => {
+    // Same entityid so the PATH is identical; only `year` differs, which lands in
+    // params. An earlier version of this test varied the entityid instead, which
+    // varies the path -- so a key built from the path alone still passed it. Fault
+    // injection caught that; this version fails if params leave the key.
     const f = mockFetch({ data: { basicdata: [{ zip_code: "10451", Efficiency: 1, "One-Bedroom": 2 }] } });
     vi.stubGlobal("fetch", f);
     const client = await connect();
-    await client.callTool({ name: "fmr_lookup", arguments: { entityid: "3600599999" } });
-    await client.callTool({ name: "fmr_lookup", arguments: { entityid: "3600199999" } });
+    await client.callTool({ name: "fmr_lookup", arguments: { entityid: "3600599999", year: 2025 } });
+    await client.callTool({ name: "fmr_lookup", arguments: { entityid: "3600599999", year: 2026 } });
     expect(f).toHaveBeenCalledTimes(2);
   });
 
