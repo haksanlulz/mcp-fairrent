@@ -78,14 +78,19 @@ class HttpError extends Error {
   }
 }
 
+// A response we understood well enough to know it will not improve: a non-JSON
+// body, usually a rejected token. It answers the same however many times asked.
+class PermanentError extends Error {}
+
 const HTTP_ATTEMPTS = Number(process.env.HUD_HTTP_ATTEMPTS ?? 3);
 const RETRY_BACKOFF_MS = [500, 2000];
 const RETRY_DEADLINE_MS = 40_000;
 const HTTP_TIMEOUT_MS = 15_000;
 
 function isRetryable(e: unknown): boolean {
+  if (e instanceof PermanentError) return false;
   if (e instanceof HttpError) return e.status === 429 || e.status >= 500;
-  return true; // transport error, abort, or non-JSON body
+  return true; // transport error or abort
 }
 
 async function withRetry<T>(fn: () => Promise<T>): Promise<T> {
@@ -128,7 +133,7 @@ async function hudGet(path: string, params: Record<string, string> = {}): Promis
     try {
       json = JSON.parse(body);
     } catch {
-      throw new Error(`HUD ${path} returned non-JSON (status ${res.status}): ${body.slice(0, 200)}`);
+      throw new PermanentError(`HUD ${path} returned non-JSON (status ${res.status}): ${body.slice(0, 200)}`);
     }
     if (!res.ok || json.error) {
       // json.error can be an object; stringify it rather than shipping "[object Object]".
