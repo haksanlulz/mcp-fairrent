@@ -105,6 +105,24 @@ npm run build       # emit dist/ (what actually ships)
 npm run verify:pack # pack, install into a clean dir, drive the installed binary over stdio
 ```
 
+## Testing
+
+Two tiers, already split by script. `npm test` is the offline tier: vitest, in-memory MCP transport, `fetch` mocked, no token. `npm run smoke` is the live tier: one real HUD call per tool, needs `HUD_API_TOKEN`, exits 0 with a skip line without it. CI runs only the offline tier.
+
+Counts, measured 2026-09-11:
+
+```bash
+find . -name '*.ts' -not -path './node_modules/*' -not -path './dist/*' -not -path './test/*' -not -name smoke.ts | xargs wc -l   # app: 767 lines (index.ts + server.ts; smoke.ts is another 65)
+find ./test -name '*.test.ts' | xargs wc -l                                                                                        # tests: 951 lines, 2 files
+npm test                                                                                                                           # 48 tests, 48 passed
+```
+
+Layers. `test/server.test.ts` drives every tool end to end through the SDK client: input validation (bounds, required pairs, non-positive numbers) rejected before any HUD request; response shaping against fixtures copied from HUD's documented samples; the transport layer (retry on 429 and 5xx, no retry on 404, response cache keyed on path plus params, failures not cached). `test/no-http-stack.test.ts` pins that the source imports only the stdio transport, never an HTTP one, and that `package.json` declares exactly one runtime dependency.
+
+Mutation probe, 2026-09-11: widened the `affordability_check` bedrooms bound in `server.ts` from `> 4` to `> 5`. One test went red: `affordability_check > enforces the table bounds: bedrooms 0-4, household_size 1-8`. 47 others stayed green. Source restored, `git diff --quiet -- server.ts` clean.
+
+Call-count assertions (`toHaveBeenCalledTimes`, `not.toHaveBeenCalled`) were audited the same day: 12 sites, 12 kept, 0 pruned. Each one pins a contract (which endpoint a call hit, validation firing before the network, retry counts, cache hits), not that a function ran. Policy: assert behavior and payloads, never bare invocation.
+
 ## AI assistance
 
 This project was built with AI assistance (Claude). Correctness rests on the checks, not the generation: the vitest suite drives every tool over the MCP in-memory transport against fixtures that mirror HUD's documented response samples — including this README's worked example — and `npm run smoke` makes one live call per tool against the real HUD API. I reviewed the code and am accountable for what it does.
