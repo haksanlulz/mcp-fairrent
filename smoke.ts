@@ -1,5 +1,10 @@
-#!/usr/bin/env node
 // Live smoke: one real call per tool against the HUD USER API.
+// Run it as `npm run smoke` (tsx). No shebang: this file is never compiled
+// (tsconfig excludes it) and never published (`files` is ["dist"]), and the
+// npx-tsx shebang that used to sit here is the exact line that made the
+// published package unable to launch -- see GAUNTLET section 6, 2026-07-29.
+// `node smoke.ts` cannot work from source either way: it resolves ./server.js,
+// which only exists under dist/ after a build.
 // Needs HUD_API_TOKEN (free, one-screen signup at huduser.gov). Skips if unset.
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
