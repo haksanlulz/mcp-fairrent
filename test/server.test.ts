@@ -1156,9 +1156,15 @@ describe("environment knobs", () => {
 
   it("waits the configured backoff between attempts", async () => {
     // The suite runs on a flattened ladder, so this is the one place that pins
-    // the ladder to the clock: two retries at 60ms each cannot finish in 60ms.
+    // the ladder to the clock. To pin anything the ladder has to CLEAR the
+    // throttle floor: every attempt also goes through throttled(), which spaces
+    // request STARTS by REQUEST_GAP_MS, so three attempts already cost ~2 x
+    // 150ms with no backoff at all. Measured on this repo against a 429-always
+    // fetch: ladder "0,0" -> 324ms, "60,60" -> 317ms, i.e. a 60ms ladder is
+    // entirely absorbed and the two are indistinguishable. At 400ms a rung the
+    // sleep is the dominant term and deleting it turns this red.
     vi.stubEnv("HUD_API_TOKEN", "test-token");
-    vi.stubEnv("HUD_RETRY_BACKOFF_MS", "60,60");
+    vi.stubEnv("HUD_RETRY_BACKOFF_MS", "400,400");
     const busy = mockFetch({ error: "rate limited" }, 429);
     vi.stubGlobal("fetch", busy);
     const client = await connect();
@@ -1167,7 +1173,8 @@ describe("environment knobs", () => {
     const elapsed = Date.now() - started;
     expect(res.isError).toBe(true);
     expect(busy).toHaveBeenCalledTimes(3);
-    expect(elapsed).toBeGreaterThanOrEqual(110); // 2 x 60ms, less timer slop
+    expect(elapsed).toBeGreaterThan(2 * REQUEST_GAP_MS); // the floor a dropped backoff stops at
+    expect(elapsed).toBeGreaterThanOrEqual(2 * 400 - 20); // 2 x 400ms, less timer slop
   });
 
   it("a nonsense HUD_HTTP_ATTEMPTS still makes the request and reports the real error", async () => {
