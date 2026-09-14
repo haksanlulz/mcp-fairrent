@@ -149,9 +149,9 @@ Two tiers, already split by script. `npm test` is the offline tier: vitest, in-m
 Counts, measured 2026-09-14 after the last change of the day:
 
 ```bash
-find . -name '*.ts' -not -path './node_modules/*' -not -path './dist/*' -not -path './build/*' -not -path './test/*' -not -name smoke.ts | xargs wc -l   # app: 1013 lines (index.ts + server.ts; smoke.ts is another 70)
-find ./test -name '*.test.ts' | xargs wc -l                                                                                                                # tests: 1438 lines, 2 files
-npm test                                                                                                                                                   # 71 tests, 71 passed
+find . -name '*.ts' -not -path './node_modules/*' -not -path './dist/*' -not -path './build/*' -not -path './test/*' -not -name smoke.ts | xargs wc -l   # app: 1028 lines (index.ts + server.ts; smoke.ts is another 70)
+find ./test -name '*.test.ts' | xargs wc -l                                                                                                                # tests: 1504 lines, 2 files
+npm test                                                                                                                                                   # 72 tests, 72 passed
 ```
 
 `build/` is excluded because `npm run build:mcpb` stages a copy of the server there.
@@ -163,6 +163,8 @@ Mutation probe, 2026-09-11: widened the `affordability_check` bedrooms bound in 
 Probed again 2026-09-14, once per change landed that day: reverting the metro-status comparison, the statedata name chain, the `FMR Percentile` field, the `?? r.geoid` ZIP fallback, `town_name` on a county row, the town-first area label, the `table_years` block, the income-year error, and the validated env knobs each turned their own test red and nothing else. The retry tests were re-probed after the backoff ladder was flattened for speed — making a 404 retryable, and a 429 not, still fails them.
 
 Fix round, same day. Two by mutation: deleting the backoff sleep from `withRetry` (the old timing test passed, its replacement fails) and deleting the retry-deadline break (the new deadline test hangs past its timeout). The rest were written red-first instead, which is the same evidence from the other side — the `list_counties` CT note, the Massachusetts note without the CT half, the kept rent verdict on a year the income table refuses, and the un-rewritten "Invalid year" each failed against the code as it stood before the change. The bundle probe was probed in both directions; GAUNTLET §6 has it.
+
+Second fix round, same day. Three by mutation: dropping `?? backoffs[backoffs.length - 1]` from `withRetry` (the new ladder test goes red at 4349ms against a 2000ms bound, while the attempt count stays at 4 either way); moving the 2BR fixture rent one dollar (the pinned README verdict goes red); and restoring the hand-written entityid error (the schema-vs-error test prints the two strings side by side). The income-year rewrite was written red-first. The two bundle-script fixes are not test-visible and were measured directly: a spaced path under `shell: true` exits 1 unquoted and 0 quoted, and the probe's temp directory count goes 23 → 24 on the old code and 24 → 24 on the new, on both the PASS and the FAIL path.
 
 Call-count assertions (`toHaveBeenCalledTimes`, `not.toHaveBeenCalled`) were audited the same day: 12 sites, 12 kept, 0 pruned. Each one pins a contract (which endpoint a call hit, validation firing before the network, retry counts, cache hits), not that a function ran. Policy: assert behavior and payloads, never bare invocation.
 
