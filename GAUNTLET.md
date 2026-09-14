@@ -6,8 +6,8 @@ This file is the pilot for all four civic servers (`mcp-fairrent`, `mcp-nychousi
 
 ## §1 Oracle — done-definition
 
-- **It is**: a stdio MCP server over the HUD USER API. Six tools — `fmr_lookup`, `income_limits`, `affordability_check`, `zip_crosswalk`, `list_counties`, `list_metro_areas`. It exists so that "is this rent affordable here, and who qualifies for help?" is answered from HUD's published tables with a citable table year, rather than from a model's recall.
-- **DONE means**: (a) an MCP client sees all six tools and a real lookup round-trips over stdio; (b) `affordability_check` returns the arithmetic AND the underlying numbers and table year, so the caller can cite rather than trust; (c) every upstream request is serialized, spaced, timed out, and identifies itself.
+- **It is**: a stdio MCP server over the HUD USER API. **Nine tools** — `affordability_check`, `fmr_lookup`, `geo_to_zips`, `income_limits`, `list_counties`, `list_metro_areas`, `mtsp_income_limits`, `state_fmr_overview`, `zip_crosswalk`. It exists so that "is this rent affordable here, and who qualifies for help?" is answered from HUD's published tables with a citable table year, rather than from a model's recall. ⚠️ This bullet said **six** until 2026-09-14, three tools after 1.1.0 shipped `mtsp_income_limits`, `state_fmr_overview` and `geo_to_zips` — an oracle listing fewer tools than the server serves cannot fail on a missing one. The list above is the sorted list asserted by vitest *"exposes all nine tools"* and by both channel probes; keep the three in step.
+- **DONE means**: (a) an MCP client sees all nine tools and a real lookup round-trips over stdio; (b) `affordability_check` returns the arithmetic AND the underlying numbers and table year, so the caller can cite rather than trust; (c) every upstream request is serialized, spaced, timed out, and identifies itself.
 - **Non-goals**: live market rents (HUD tables only), voucher-ceiling advice (FMR is not the payment standard — 24 CFR 982.503), storing tenant data.
 
 - **MUST NEVER** (operator, 2026-07-29): *"It says someone qualifies when they don't."* A false positive on an AMI band costs a real person a filing fee, a document run, and a rejection. Any ambiguity at a threshold resolves against the applicant qualifying. Locked by SPEC `qualification-never-overstates`.
@@ -20,7 +20,7 @@ This file is the pilot for all four civic servers (`mcp-fairrent`, `mcp-nychousi
 
 | Artifact | Real channel | Pass condition | Rung? |
 |---|---|---|---|
-| server process | an MCP client spawns it and speaks JSON-RPC over **stdio** | initialize handshake · tools/list returns the documented set · a real lookup round-trips | ✅ **`npm run verify:pack` spawns the installed binary and speaks real stdio** (added 2026-07-29). ⚠️ `npm run smoke` and `test/` are BOTH `InMemoryTransport` — an earlier version of this table claimed smoke drove real stdio; it does not, and that claim was wrong when written. |
+| server process | an MCP client spawns it and speaks JSON-RPC over **stdio** | initialize handshake · tools/list returns all nine tools · a real lookup round-trips | ✅ **`npm run verify:pack` spawns the installed binary and speaks real stdio** (added 2026-07-29). ⚠️ `npm run smoke` and `test/` are BOTH `InMemoryTransport` — an earlier version of this table claimed smoke drove real stdio; it does not, and that claim was wrong when written. |
 | upstream API contract | live HUD USER API | endpoints answer; token absence is reported, not crashed | ✅ `npm run smoke` (skips loudly without `HUD_API_TOKEN`) |
 | public repo | a stranger clones and runs `npm test` | suite green, typecheck clean, build emits | ✅ **GitHub Actions, Node 18/20/22** (added 2026-07-29): `npm ci` → typecheck → build → test, plus a separate `package` job running `verify:pack` |
 | **npm package** | a stranger runs `npx @haksanlulz/mcp-fairrent` having never cloned | bin shim resolves · server boots · handshake answers · tools/list is well-formed | ✅ **`npm run verify:pack`** — builds, packs, installs the tarball into a throwaway project, launches **through the bin shim**, speaks MCP. Mutation-probed against the real historical defect: restoring the `npx tsx` shebang turns it red. Wired into CI. |
@@ -36,7 +36,8 @@ This file is the pilot for all four civic servers (`mcp-fairrent`, `mcp-nychousi
 | One hung request cannot wedge later calls | `AbortSignal.timeout(15_000)` on every fetch | ✅ present (assertion via the header test) |
 | Every request identifies itself to HUD | vitest asserts `User-Agent` matches `^mcp-fairrent/\d` | ✅ **added 2026-07-29, mutation-probed red** |
 | Token never enters the query string | vitest asserts header-only auth | ✅ present |
-| Published tarball ships no tests/tooling | `files` whitelist + `npm pack --dry-run` | ✅ **added 2026-07-29** — 6 files, 9.8 kB |
+| Published tarball ships no tests/tooling | `files` whitelist + `npm pack --dry-run`, asserted by `verify:pack` | ✅ **added 2026-07-29** — re-measured 2026-09-14: **5 files, 19.0 kB packed / 61.4 kB unpacked** (the line read "6 files, 9.8 kB" from 2026-07-29 until then) |
+| Bundle ships no dev toolchain | `build:mcpb` stages instead of packing in place; `verify:mcpb` launches what it built | ✅ **added 2026-09-14** — 3.7 MB packed, the compiled server plus one runtime dependency |
 | No band overstates qualification (SPEC `qualification-never-overstates`) | vitest: *"one dollar over any line disqualifies that band"* | ✅ **added 2026-07-29**, mutation-probed red via `limit + 1` |
 
 ## §4 Ladder
@@ -87,11 +88,20 @@ Then it carries eligibility_scope stating figures are program lines, not
      determinations, and FMRs are not payment standards
 ```
 
+### 2026-09-14 — npm audit advisories, measured rather than dismissed
+
+`npm audit` reports **7 (4 low, 2 moderate, 1 high)**. Read before acting on, because the counts move and the reachability does not:
+
+- **hono, qs (moderate)** — inside `@modelcontextprotocol/sdk`, which carries them to support HTTP transports this server never imports. They ship in the dependency tree and cannot execute here. That determination is enforced, not asserted: `test/no-http-stack.test.ts` fails if an HTTP transport enters the import path or a second runtime dependency appears, and the day either happens these advisories become live.
+- **tmp (high, no fix available)** — new on 2026-09-14, arriving under `@anthropic-ai/mcpb` → `@inquirer/prompts` → `external-editor`. That is a **devDependency**, the vendor's packer, and it runs only when a bundle is built. It reaches neither shipped artifact: the npm tarball is 5 files (`dist/` plus `package.json`) and the `.mcpb` stage installs with `--omit=dev`. Both are checked by their probes rather than taken on trust.
+
+Adding a build tool moved the audit count, and the count on its own says nothing about this server. The reachability argument above is the thing to re-check when it moves again.
+
 ## Known gaps, ranked by blast radius
 
-1. **README-as-artifact.** It is what LobeHub and Glama render, and it still documents the old clone-and-point-tsx-at-it install. Nothing checks the documented path executes, and the published package now supports a shorter one. **Highest-value remaining item.**
+1. ~~**README-as-artifact.** It is what LobeHub and Glama render, and it still documents the old clone-and-point-tsx-at-it install.~~ **RESOLVED — the install line was replaced with `npx -y @haksanlulz/mcp-fairrent` in `18c90d4` ("docs: lead with the npx install, since there is now one"), and this entry went on describing the old one for weeks after.** What survives of the gap is narrower and stays open: the README is still the consumed artifact on those sites and nothing checks that what it documents executes (§2's last row).
 2. **§5 holds one spec of a planned three** — the operator's stated MUST-NEVER for this server is authored, implemented and linked (2026-07-29). Slots 2 and 3 are open. §1's descriptive bullets are still transcribed from the README rather than elicited; only the MUST NEVER clause is in his words.
 3. **RESOLVED 2026-07-30 — the Node floor is now measured.** CI runs a two-stage `package` → `consume` job: build and pack on Node 20, then download the tarball and speak MCP to it on **18, 20 and 22**. All three pass, so the published package genuinely runs on Node 18 and `engines` says `>=18` as a measurement rather than a guess. It is re-measured on every push. ⚑ The first run of this job reported `consume(18)` failing in all four repos, which read as "the package does not support 18". It was the probe: `pack-probe.mjs` used `import.meta.dirname` (Node 20.11+), which is `undefined` on 18, so it threw before touching the tarball. A failure that confident, from an instrument in its first run, is a claim about the instrument (Rule 23).
 4. **RESOLVED 2026-07-30 — vitest aligned.** fairrent moved 2.1.0 → 4.1.10, matching the siblings; suite still 30/30. The drift was logged as cosmetic and was not — it was the entire reason fairrent alone passed its first CI run on Node 18, i.e. four supposedly identical repos behaving differently for an unrecorded reason.
-4. **`smoke` is in-memory, not stdio.** `verify:pack` now covers the real-stdio channel, so smoke's remaining job is the live upstream contract. Its name oversells it.
-5. **Nothing is published yet.** The package is verified publishable; `npm publish` is an operator action.
+5. **`smoke` is in-memory, not stdio.** `verify:pack` and `verify:mcpb` now cover the real-stdio channel, so smoke's remaining job is the live upstream contract. Its name oversells it. (This entry was a second **4** until 2026-09-14 — two gaps sharing one number, so "gap 4" named either.)
+6. **Nothing is published yet.** The package is verified publishable and the bundle is verified installable; `npm publish` and attaching a `.mcpb` to a release are both operator actions.

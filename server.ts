@@ -546,6 +546,16 @@ function withScope<T extends Record<string, unknown>>(result: T): T & { eligibil
 // answered 400 while /fmr/data/3600599999 answered 200, and /il/data behaves
 // the same. Two of these errors used to offer a ZIP or a state code, so a model
 // that read the validation message and retried as told got a 400 from HUD.
+// One description for the four entityid properties, for the same reason as
+// ENTITYID_REQUIRED: an LLM fills arguments from the schema, so this text and
+// the thrown error have to say the same thing. The New England clause is not a
+// footnote -- live 2026-09-14, /fmr/data/0900952070 (New Haven town, the id
+// list_counties gives for CT) answers 404 while /fmr/data/0917052070 (the same
+// town's id in state_fmr_overview) answers 200, and /fmr/data/0917099999, the
+// FIPS + 99999 construction, is a 404 too.
+const ENTITYID_DESC =
+  "10-digit county entity id (county FIPS + 99999) or metro CBSA code. Derive from a ZIP via zip_crosswalk then list_counties. In New England a HUD area is a town, not a county: take the town's code from state_fmr_overview, because the FMR table does not answer on the legacy county ids list_counties returns there";
+
 const ENTITYID_REQUIRED =
   "entityid is required (10-digit county FIPS + 99999 or metro CBSA code; derive from a ZIP via zip_crosswalk then list_counties)";
 
@@ -564,7 +574,7 @@ export function createServer() {
         inputSchema: {
           type: "object",
           properties: {
-            entityid: { type: "string", description: "10-digit county entity id (county FIPS + 99999) or metro CBSA code. Derive from a ZIP via zip_crosswalk then list_counties" },
+            entityid: { type: "string", description: ENTITYID_DESC },
             year: { type: "string", description: "FMR year (e.g. '2026'); default is the latest" },
           },
           required: ["entityid"],
@@ -577,7 +587,7 @@ export function createServer() {
         inputSchema: {
           type: "object",
           properties: {
-            entityid: { type: "string", description: "10-digit county entity id (county FIPS + 99999) or metro CBSA code. Derive from a ZIP via zip_crosswalk then list_counties" },
+            entityid: { type: "string", description: ENTITYID_DESC },
             household_size: { type: "number", description: "Family size 1-8; omit for all sizes" },
             year: { type: "string", description: "Income-limit year; default is the latest" },
           },
@@ -591,7 +601,7 @@ export function createServer() {
         inputSchema: {
           type: "object",
           properties: {
-            entityid: { type: "string", description: "10-digit county entity id (county FIPS + 99999) or metro CBSA code. Derive from a ZIP via zip_crosswalk then list_counties" },
+            entityid: { type: "string", description: ENTITYID_DESC },
             rent: { type: "number", description: "Proposed monthly rent in dollars, to compare against the FMR for the given bedrooms" },
             bedrooms: { type: "number", description: "Bedroom count 0-4 (0 = efficiency/studio); required when rent is given" },
             income: { type: "number", description: "Annual gross household income in dollars, to compare against the 30/50/80% area-median lines" },
@@ -622,7 +632,7 @@ export function createServer() {
         inputSchema: {
           type: "object",
           properties: {
-            entityid: { type: "string", description: "10-digit county entity id (county FIPS + 99999) or metro CBSA code. Derive from a ZIP via zip_crosswalk then list_counties" },
+            entityid: { type: "string", description: ENTITYID_DESC },
             household_size: { type: "number", description: "Family size 1-8; omit for all sizes" },
             year: { type: "string", description: "Table year; default is the latest" },
           },
@@ -659,7 +669,7 @@ export function createServer() {
       {
         name: "list_counties",
         description:
-          "List the counties in a state with their 10-digit FIPS entity ids, so you can look up FMR or income limits by county name. Pass a 2-letter state code.",
+          "List the counties in a state with their 10-digit FIPS entity ids, so you can look up FMR or income limits by county name. Pass a 2-letter state code. In the six New England states HUD areas are towns, so rows come back one per town with a town_name that is the only thing separating them - and there the FMR table answers on the ids in state_fmr_overview, not on these. Rows also carry an `area` label combining the two.",
         inputSchema: {
           type: "object",
           properties: {
@@ -799,6 +809,7 @@ export function createServer() {
           state: r.state,
           res_ratio: ratio(r.res_ratio),
           bus_ratio: ratio(r.bus_ratio),
+          oth_ratio: ratio(r.oth_ratio),
           tot_ratio: ratio(r.tot_ratio),
         }));
         return asJson(
@@ -808,7 +819,7 @@ export function createServer() {
             note:
               results.length === 0
                 ? "No crosswalk rows for that ZIP. It may be a PO-box-only or single-building ZIP with no residential addresses, or not a current USPS ZIP; verify the ZIP before concluding anything."
-                : "res_ratio is the share of the ZIP's residential addresses in each geography; the highest-share county is usually the right entityid.",
+                : "res_ratio is the share of the ZIP's residential addresses in each geography; the highest-share county is usually the right entityid. bus_ratio, oth_ratio and tot_ratio are the same share for business, other and all addresses.",
             matches: results,
           }),
         );
@@ -886,6 +897,7 @@ export function createServer() {
           state: r.state,
           res_ratio: ratio(r.res_ratio),
           bus_ratio: ratio(r.bus_ratio),
+          oth_ratio: ratio(r.oth_ratio),
           tot_ratio: ratio(r.tot_ratio),
         }));
         return asJson(
@@ -896,7 +908,7 @@ export function createServer() {
             note:
               results.length === 0
                 ? "No ZIPs matched. Check the GEOID length for the geography type (county = 5-digit FIPS, tract = 11-digit, congressional district = 4-digit state+district)."
-                : "res_ratio is the share of the geography's residential addresses in that ZIP.",
+                : "res_ratio is the share of the geography's residential addresses in that ZIP; bus_ratio, oth_ratio and tot_ratio are the same share for business, other and all addresses.",
             zips: results,
           }),
         );

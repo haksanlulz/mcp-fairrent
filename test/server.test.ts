@@ -214,6 +214,9 @@ describe("mcp-fairrent server", () => {
     const body = bodyOf(res);
     expect(body.matches[0].geoid).toBe("36005");
     expect(body.matches[0].res_ratio).toBe(1); // ratios now numeric, 4dp
+    // All four of HUD's ratios: without oth_ratio, tot_ratio cannot be
+    // reconciled against the parts it is made of.
+    expect(body.matches[0].oth_ratio).toBe(1);
   });
 
   it("zip_crosswalk rejects a non-5-digit ZIP and an unknown target", async () => {
@@ -1018,6 +1021,7 @@ describe("geo_to_zips", () => {
     expect(body.zips[0].zip).toBe("10451");
     expect(body.zips[1].zip).toBe("10452");
     expect(body.zips[0].res_ratio).toBe(0.0442);
+    expect(body.zips[0].oth_ratio).toBe(0.0304); // all four of HUD's ratios
   });
 
   it("rejects an unknown source geography with the valid list", async () => {
