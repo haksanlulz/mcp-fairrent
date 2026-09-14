@@ -24,6 +24,7 @@ This file is the pilot for all four civic servers (`mcp-fairrent`, `mcp-nychousi
 | upstream API contract | live HUD USER API | endpoints answer; token absence is reported, not crashed | ✅ `npm run smoke` (skips loudly without `HUD_API_TOKEN`) |
 | public repo | a stranger clones and runs `npm test` | suite green, typecheck clean, build emits | ✅ **GitHub Actions, Node 18/20/22** (added 2026-07-29): `npm ci` → typecheck → build → test, plus a separate `package` job running `verify:pack` |
 | **npm package** | a stranger runs `npx @haksanlulz/mcp-fairrent` having never cloned | bin shim resolves · server boots · handshake answers · tools/list is well-formed | ✅ **`npm run verify:pack`** — builds, packs, installs the tarball into a throwaway project, launches **through the bin shim**, speaks MCP. Mutation-probed against the real historical defect: restoring the `npx tsx` shebang turns it red. Wired into CI. |
+| **.mcpb bundle** | a non-developer opens the bundle in a host that supports MCP Bundles and types the token into the host's own UI | manifest validates · the bundle unpacks · the declared `entry_point` launches · tools/list matches the manifest · a token injected through `user_config` reaches HUD | ✅ **`npm run build:mcpb` then `npm run verify:mcpb`** (added 2026-09-14). The probe unzips the built bundle, spawns `server.mcp_config.command` with `${__dirname}` and `${user_config.api_token}` substituted the way a host substitutes them, and with a token makes one live HUD call. Mutation-probed three ways, each red: a wrong `entry_point`, a dropped `env` injection, `sensitive: false`. ⚠️ `mcpb pack` packed the wrong-`entry_point` bundle without complaint, so `mcpb validate` is not the rung — the probe is. |
 | registry listing (LobeHub, Glama) | a stranger reads the README there and follows it cold | documented install produces a working server | 🔴 **NO RUNG** — the README is the consumed artifact on those sites and nothing checks it stays executable |
 
 ## §3 Invariants — scans
@@ -45,10 +46,10 @@ This file is the pilot for all four civic servers (`mcp-fairrent`, `mcp-nychousi
 | docs-only | none |
 | code-touch (`server.ts` / `index.ts` / `test/`) | `npm test` + `npm run typecheck` + §3 scans · **this is a public commit** |
 | behavior-change (tool names, schemas, output shape) | + `npm run smoke` with a live token + README tool table + §5 specs |
-| artifact-affecting (`package.json`, deps, shebang, tsconfig) | + **`npm run verify:pack`** |
+| artifact-affecting (`package.json`, deps, shebang, tsconfig, `manifest.json`, `scripts/`) | + **`npm run verify:pack`** + **`npm run build:mcpb` then `npm run verify:mcpb`** |
 | release (tag / npm publish) | + the full §2 channel map + `npm run smoke` with a live token + §5 specs |
 
-**Hard gate:** a skipped rung makes the done-report say **BLOCKED**, not done. `prepublishOnly` (`build && typecheck && test`) enforces the code half mechanically. The npm channel itself is covered by `verify:pack`, which CI runs on every push.
+**Hard gate:** a skipped rung makes the done-report say **BLOCKED**, not done. `prepublishOnly` (`build && typecheck && test`) enforces the code half mechanically. The npm channel is covered by `verify:pack` and the bundle channel by `verify:mcpb`, both of which CI runs on every push.
 
 ## §5 Acceptance specs
 

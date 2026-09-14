@@ -58,6 +58,12 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run verify:pack
+      # The bundle channel. build:mcpb stages the compiled server plus its one
+      # runtime dependency and packs a .mcpb; verify:mcpb unpacks that file and
+      # launches it exactly as the manifest tells a host to. No HUD token here,
+      # so the probe stops short of the live call and says so.
+      - run: npm run build:mcpb
+      - run: npm run verify:mcpb
       - run: npm pack --silent > .tgzname
       - uses: actions/upload-artifact@v4
         with:

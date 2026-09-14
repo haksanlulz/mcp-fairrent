@@ -1,0 +1,103 @@
+{
+  "manifest_version": "0.3",
+  "name": "mcp-fairrent",
+  "display_name": "HUD Fair Market Rents and Income Limits",
+  "version": "1.1.0",
+  "description": "HUD housing data: Fair Market Rents, Section 8 income limits, LIHTC/MTSP bands, computed affordability verdicts, and the USPS ZIP crosswalk both ways.",
+  "long_description": "Answers \"is this rent affordable here, and who qualifies for help?\" from HUD's published tables rather than from recall. Fair Market Rents by bedroom count for an area or a whole state, the 30/50/80% AMI income limits by household size, the LIHTC/MTSP bands tax-credit buildings use, and the USPS crosswalk that turns a ZIP into the right HUD area and back. affordability_check does the arithmetic server-side and returns the underlying numbers and table year, so an answer can be cited.\n\nNeeds a free HUD USER API token: one-screen signup at https://www.huduser.gov/portal/dataset/fmr-api.html. Read-only; it sends nothing to HUD but the area you ask about.",
+  "author": {
+    "name": "Abishai James",
+    "url": "https://github.com/haksanlulz"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/haksanlulz/mcp-fairrent"
+  },
+  "homepage": "https://github.com/haksanlulz/mcp-fairrent",
+  "documentation": "https://github.com/haksanlulz/mcp-fairrent#readme",
+  "support": "https://github.com/haksanlulz/mcp-fairrent/issues",
+  "license": "MIT",
+  "keywords": [
+    "housing",
+    "hud",
+    "fair-market-rent",
+    "section-8",
+    "income-limits",
+    "lihtc",
+    "crosswalk",
+    "civic-tech"
+  ],
+  "privacy_policies": [
+    "https://www.hud.gov/privacy"
+  ],
+  "server": {
+    "type": "node",
+    "entry_point": "server/index.js",
+    "mcp_config": {
+      "command": "node",
+      "args": [
+        "${__dirname}/server/index.js"
+      ],
+      "env": {
+        "HUD_API_TOKEN": "${user_config.api_token}"
+      }
+    }
+  },
+  "tools": [
+    {
+      "name": "fmr_lookup",
+      "description": "Fair Market Rent for an area, by bedroom count (efficiency through 4BR)."
+    },
+    {
+      "name": "income_limits",
+      "description": "The 30% / 50% / 80% AMI income thresholds for an area; the 50% line is the usual Section 8 voucher cutoff."
+    },
+    {
+      "name": "affordability_check",
+      "description": "How far a rent sits above or below FMR, and which income bands a household qualifies under, computed server-side with the numbers and table year behind each verdict."
+    },
+    {
+      "name": "zip_crosswalk",
+      "description": "Map a ZIP to the county, tract, CBSA, CBSA division, congressional district, or county subdivision it sits in."
+    },
+    {
+      "name": "list_counties",
+      "description": "Counties (and, in New England, towns) in a state with their HUD entity ids."
+    },
+    {
+      "name": "list_metro_areas",
+      "description": "HUD metro areas (CBSAs) with their codes."
+    },
+    {
+      "name": "mtsp_income_limits",
+      "description": "The LIHTC tax-credit income bands at 20-80% AMI plus the HERA special bands."
+    },
+    {
+      "name": "state_fmr_overview",
+      "description": "Every county's and metro's FMRs for a whole state in one call."
+    },
+    {
+      "name": "geo_to_zips",
+      "description": "The reverse crosswalk: every ZIP inside a county, tract, metro, CBSA division, congressional district, or county subdivision."
+    }
+  ],
+  "user_config": {
+    "api_token": {
+      "type": "string",
+      "title": "HUD USER API token",
+      "description": "Required by every tool. Free, one-screen signup at https://www.huduser.gov/portal/dataset/fmr-api.html",
+      "required": true,
+      "sensitive": true
+    }
+  },
+  "compatibility": {
+    "platforms": [
+      "darwin",
+      "win32",
+      "linux"
+    ],
+    "runtimes": {
+      "node": ">=18"
+    }
+  }
+}

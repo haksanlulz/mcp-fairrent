@@ -47,6 +47,18 @@ npm run build     # emits dist/; the published bin is dist/index.js
 `npm start` runs the TypeScript directly via [`tsx`](https://github.com/privatenumber/tsx) without building.
 </details>
 
+<details>
+<summary>As an MCP Bundle (.mcpb)</summary>
+
+For hosts that install MCP Bundles: the bundle declares the HUD token as a required, sensitive setting, so the host collects it in its own UI instead of you editing a JSON `env` block.
+
+```bash
+npm run build:mcpb   # writes build/mcp-fairrent-<version>.mcpb
+```
+
+Open that file in the host. No bundle is attached to a release yet — build it from source.
+</details>
+
 ## Token
 
 Every tool needs a free HUD USER API token. One-screen signup at [huduser.gov](https://www.huduser.gov/portal/dataset/fmr-api.html) → set `HUD_API_TOKEN`. The tools tell you so if it's missing.
@@ -116,6 +128,8 @@ npm run smoke     # one live call per tool (needs HUD_API_TOKEN; skips without)
 npm run typecheck
 npm run build       # emit dist/ (what actually ships)
 npm run verify:pack # pack, install into a clean dir, drive the installed binary over stdio
+npm run build:mcpb  # stage + pack the .mcpb bundle into build/
+npm run verify:mcpb # unpack that bundle and launch it the way a host does
 ```
 
 ## Testing
