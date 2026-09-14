@@ -598,8 +598,13 @@ function withScope<T extends Record<string, unknown>>(result: T): T & { eligibil
 const ENTITYID_DESC =
   "10-digit county entity id (county FIPS + 99999) or metro CBSA code. Derive from a ZIP via zip_crosswalk then list_counties. In New England a HUD area is a town, not a county: take the town's code from state_fmr_overview, because the FMR table does not answer on the legacy county ids list_counties returns there";
 
-const ENTITYID_REQUIRED =
-  "entityid is required (10-digit county FIPS + 99999 or metro CBSA code; derive from a ZIP via zip_crosswalk then list_counties)";
+// Derived, not restated. The two used to be hand-kept copies and drifted the
+// moment the New England clause landed on one of them: the description carried
+// it, the error did not, so every caller who hit the validation message -- a
+// Connecticut one included -- was routed through list_counties, whose ids the
+// FMR table refuses (0900952070 -> 404, 0917052070 -> 200, live 2026-09-14).
+// One string cannot disagree with itself.
+const ENTITYID_REQUIRED = `entityid is required — ${ENTITYID_DESC}.`;
 
 export function createServer() {
   const server = new Server(

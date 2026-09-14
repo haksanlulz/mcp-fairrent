@@ -437,6 +437,7 @@ describe("mcp-fairrent server", () => {
     const fetchMock = mockFetch(FMR_PAYLOAD);
     vi.stubGlobal("fetch", fetchMock);
     const client = await connect();
+    const { tools: served } = await client.listTools();
     for (const name of ENTITYID_TOOLS) {
       const args: Record<string, unknown> = { entityid: "" };
       if (name === "affordability_check") Object.assign(args, { rent: 2600, bedrooms: 2 });
@@ -447,6 +448,17 @@ describe("mcp-fairrent server", () => {
       expect(msg, name).toContain("99999");
       expect(msg, name).not.toMatch(/state code/i); // HUD 400s /fmr/data/NY
       expect(msg, name).not.toMatch(/or ZIP\)/i); // and /fmr/data/10451
+      // "the same thing the schema does" is checked against the SCHEMA, not
+      // against a constant both sides import -- that is the claim, so read it
+      // off the served tool. The two were hand-kept copies and drifted the
+      // moment the New England clause landed on the description only, which
+      // sent every caller, Connecticut included, to list_counties, whose CT
+      // ids the FMR table 404s.
+      const schemaDesc = String(
+        (served.find((t: any) => t.name === name) as any)?.inputSchema?.properties?.entityid?.description ?? "",
+      );
+      expect(schemaDesc, name).toContain("state_fmr_overview");
+      expect(msg, name).toContain(schemaDesc);
     }
     expect(fetchMock).not.toHaveBeenCalled(); // the error fires before any HUD call
   });
