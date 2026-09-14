@@ -317,6 +317,24 @@ function areaLabel(d: any): string | undefined {
   return base || town || undefined;
 }
 
+// The six states where a HUD FMR area is a town rather than a county, so
+// list_counties returns one row per town and county_name repeats down the list.
+const NEW_ENGLAND = new Set(["CT", "MA", "ME", "NH", "RI", "VT"]);
+
+// Measured live 2026-09-14, and the reason this warning rides the payload
+// rather than only the tool description: /fmr/listCounties/CT returns 169 rows
+// carrying legacy 090xx county ids, and /fmr/data 404s on them
+// (0900952070 -> 404) while state_fmr_overview's planning-region id for the
+// same town answers (0917052070 -> 200). The income-limit table is more
+// forgiving and resolves the legacy id, which is why the failure shows up on
+// one half of a lookup and not the other. Massachusetts town ids from the same
+// endpoint do answer (2502300170 -> 200), so this is Connecticut's
+// county-to-planning-region renumbering, not New England generally.
+const NEW_ENGLAND_NOTE =
+  "In New England a HUD FMR area is a town, so these rows come one per town and county_name repeats across them — read `area` or `town_name`, not county_name.";
+const CT_ID_NOTE =
+  " Connecticut also replaced counties with planning regions and HUD's FMR table followed: the fips_code values here are the legacy county ids, and the FMR table answers 404 on them (the income-limit table still resolves them). For Connecticut take the town's `code` from state_fmr_overview instead.";
+
 function text(s: string) {
   return { content: [{ type: "text" as const, text: s }] };
 }
@@ -938,7 +956,12 @@ export function createServer() {
           state_code: c.state_code,
           category: c.category || undefined,
         }));
-        return asJson(withScope({ state, counties }));
+        // The caveat rides the payload, not just the tool description: a model
+        // that already has the tool loaded reads the result. Every sibling tool
+        // here puts its caveat in the answer for the same reason, and this is
+        // the one tool whose ids are known to be dead in part of its own output.
+        const note = NEW_ENGLAND.has(state) ? `${NEW_ENGLAND_NOTE}${state === "CT" ? CT_ID_NOTE : ""}` : undefined;
+        return asJson(withScope({ state, ...(note ? { note } : {}), counties }));
       }
       case "list_metro_areas": {
         const data = await hudGet(`/fmr/listMetroAreas`);

@@ -277,6 +277,43 @@ describe("mcp-fairrent server", () => {
     expect(avon.category).toBe("County");
   });
 
+  it("warns in the payload that Connecticut's ids are the ones the FMR table refuses", async () => {
+    // The warning existed in the tool description and the README. A model that
+    // already has the tool loaded reads the RESULT, and this is the one tool
+    // whose own ids are dead in part of its output: live 2026-09-14,
+    // /fmr/data/0900952070 (the New Haven town id this list returns) is a 404
+    // while /fmr/data/0917052070 answers 200.
+    vi.stubEnv("HUD_API_TOKEN", "test-token");
+    vi.stubGlobal("fetch", mockFetch(CT_COUNTIES_PAYLOAD));
+    const client = await connect();
+    const body = bodyOf(await client.callTool({ name: "list_counties", arguments: { state: "CT" } }));
+    expect(String(body.note)).toMatch(/one per town/);
+    expect(String(body.note)).toMatch(/404/);
+    expect(String(body.note)).toMatch(/state_fmr_overview/);
+  });
+
+  it("carries the town warning in the other five New England states, without the CT id warning", async () => {
+    // Massachusetts town ids from this same endpoint DO answer the FMR table
+    // (/fmr/data/2502300170 -> 200, live 2026-09-14), so the 404 half is
+    // Connecticut's renumbering and must not be claimed for the region.
+    vi.stubEnv("HUD_API_TOKEN", "test-token");
+    vi.stubGlobal("fetch", mockFetch({
+      data: [{ state_code: "MA", fips_code: "2502300170", county_name: "Plymouth County", town_name: "Abington town", category: "County" }],
+    }));
+    const client = await connect();
+    const body = bodyOf(await client.callTool({ name: "list_counties", arguments: { state: "MA" } }));
+    expect(String(body.note)).toMatch(/one per town/);
+    expect(String(body.note)).not.toMatch(/404/);
+  });
+
+  it("adds no New England note outside those six states", async () => {
+    vi.stubEnv("HUD_API_TOKEN", "test-token");
+    vi.stubGlobal("fetch", mockFetch({ data: [{ county_name: "Bronx County", fips_code: "3600599999", state_code: "NY" }] }));
+    const client = await connect();
+    const body = bodyOf(await client.callTool({ name: "list_counties", arguments: { state: "NY" } }));
+    expect(body.note).toBeUndefined();
+  });
+
   it("area labels lead with the town where HUD gives one", async () => {
     // /il/data/0900901220 live, 2026-09-14: HUD answers with the planning
     // region AND the town, and only the town says which of the region's rows
