@@ -701,6 +701,125 @@ describe("SPEC qualification-never-overstates", () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// Two tables, two publication clocks
+// ---------------------------------------------------------------------------
+
+describe("affordability_check across two table years", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
+  });
+
+  // Live captures, 2026-09-14: /fmr/data/3600599999 answers 2027 by default,
+  // /il/data/3600599999 answers 2026 and rejects year=2027 outright.
+  const FMR_2027 = {
+    data: {
+      county_name: "Bronx County, NY",
+      counties_msa: "",
+      town_name: "",
+      metro_status: "1.0",
+      metro_name: "New York-Newark-Jersey City, NY-NJ",
+      basicdata: { Efficiency: 2593, "One-Bedroom": 2729, "Two-Bedroom": 2971, "Three-Bedroom": 3760, "Four-Bedroom": 4121, year: "2027" },
+    },
+  };
+  const IL_2026 = {
+    data: {
+      county_name: "Bronx County, NY",
+      metro_name: "New York-Newark-Jersey City, NY-NJ",
+      year: "2026",
+      median_income: 104300,
+      very_low: { il50_p3: 76350 },
+      extremely_low: { il30_p3: 45850 },
+      low: { il80_p3: 122150 },
+    },
+  };
+
+  // Like mockFetchRoutes, but each route carries its own HTTP status, because
+  // the case under test is one endpoint answering 200 and the other 400.
+  function routedWithStatus(routes: Array<[fragment: string, payload: unknown, status: number]>) {
+    return vi.fn(async (url: any) => {
+      const u = String(url);
+      const hit = routes.find(([fragment]) => u.includes(fragment));
+      const [, payload, status] = hit ?? [undefined, { error: `no mock route for ${u}` }, 404];
+      return new Response(JSON.stringify(payload), { status, headers: { "content-type": "application/json" } });
+    });
+  }
+
+  it("names both table years and flags the mismatch", async () => {
+    vi.stubEnv("HUD_API_TOKEN", "test-token");
+    vi.stubGlobal("fetch", routedWithStatus([
+      ["/fmr/data/", FMR_2027, 200],
+      ["/il/data/", IL_2026, 200],
+    ]));
+    const client = await connect();
+    const body = bodyOf(await client.callTool({
+      name: "affordability_check",
+      arguments: { entityid: "3600599999", rent: 2600, bedrooms: 2, income: 48000, household_size: 3 },
+    }));
+    expect(body.table_years.fmr).toBe("2027");
+    expect(body.table_years.income).toBe("2026");
+    expect(body.table_years.mismatch).toBe(true);
+    expect(String(body.table_years.note)).toMatch(/separate cycles/);
+    // The two verdicts still name their own years; the block exists so the
+    // difference is visible without reading both strings.
+    expect(body.rent_check.verdict).toMatch(/2027 Fair Market Rent/);
+    expect(body.income_check.verdict).toMatch(/2026 HUD income limits/);
+  });
+
+  it("does not flag a mismatch when both tables answer the same year", async () => {
+    vi.stubEnv("HUD_API_TOKEN", "test-token");
+    vi.stubGlobal("fetch", routedWithStatus([
+      ["/fmr/data/", { data: { ...FMR_2027.data, basicdata: { ...FMR_2027.data.basicdata, year: "2026" } } }, 200],
+      ["/il/data/", IL_2026, 200],
+    ]));
+    const client = await connect();
+    const body = bodyOf(await client.callTool({
+      name: "affordability_check",
+      arguments: { entityid: "3600599999", rent: 2600, bedrooms: 2, income: 48000, household_size: 3 },
+    }));
+    expect(body.table_years).toEqual({ fmr: "2026", income: "2026", mismatch: false });
+  });
+
+  it("explains an income-table year refusal instead of relaying HUD's 400", async () => {
+    // The caller saw 2027 on the rent side and asked for it on both. HUD's raw
+    // answer names /il/data and a status code; it does not say the income
+    // tables lag, and it kills the rent half that would have worked.
+    vi.stubEnv("HUD_API_TOKEN", "test-token");
+    vi.stubGlobal("fetch", routedWithStatus([
+      ["/fmr/data/", FMR_2027, 200],
+      ["/il/data/", { error: "Invalid year" }, 400],
+    ]));
+    const client = await connect();
+    const res: any = await client.callTool({
+      name: "affordability_check",
+      arguments: { entityid: "3600599999", rent: 2600, bedrooms: 2, income: 48000, household_size: 3, year: "2027" },
+    });
+    expect(res.isError).toBe(true);
+    const msg = String(res.content[0].text);
+    expect(msg).toMatch(/income-limit tables publish on a later cycle/);
+    expect(msg).toMatch(/Re-run affordability_check with no year/);
+    expect(msg).toMatch(/fmr_lookup with year 2027/);
+  });
+
+  it("still surfaces an ordinary IL 400 unchanged", async () => {
+    // A bad entityid also 400s. That one is the caller's mistake and must not
+    // be relabelled as a publication-cycle problem.
+    vi.stubEnv("HUD_API_TOKEN", "test-token");
+    vi.stubGlobal("fetch", routedWithStatus([
+      ["/il/data/", { error: "Missing or invalid value in the query parameter(s)" }, 400],
+    ]));
+    const client = await connect();
+    const res: any = await client.callTool({
+      name: "affordability_check",
+      arguments: { entityid: "36005", income: 48000, household_size: 3 },
+    });
+    expect(res.isError).toBe(true);
+    expect(String(res.content[0].text)).toMatch(/Missing or invalid value/);
+    expect(String(res.content[0].text)).not.toMatch(/later cycle/);
+  });
+});
+
 describe("fairrent 1.1.0", () => {
   it("a retired ZIP (HUD 404 no-data) answers with the empty-note shape, not an error", async () => {
     vi.stubEnv("HUD_API_TOKEN", "test-token");

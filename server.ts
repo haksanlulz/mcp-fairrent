@@ -408,7 +408,33 @@ function shapeAffordability(input: {
     };
   }
 
-  return { entityid, area, rent_check, income_check };
+  // HUD's two tables are on separate publication clocks, so a combined call can
+  // answer from two different years -- and each verdict names only its own. Live
+  // 2026-09-14, a default call returned a 2027 rent verdict beside a 2026 income
+  // verdict with nothing at the top level saying so, which is one paragraph and
+  // two vintages for anyone quoting it. Report both years where the answer used
+  // both, and say plainly when they differ. No year is written down here: the
+  // pair is read off whichever tables actually answered.
+  const fmrYear = rent_check?.year;
+  const ilYear = income_check?.year;
+  let table_years: Record<string, unknown> | undefined;
+  if (fmrYear !== undefined || ilYear !== undefined) {
+    const bothKnown = fmrYear !== undefined && ilYear !== undefined;
+    const mismatch = bothKnown && String(fmrYear) !== String(ilYear);
+    table_years = {
+      fmr: fmrYear,
+      income: ilYear,
+      ...(bothKnown ? { mismatch } : {}),
+      ...(mismatch
+        ? {
+            note:
+              "HUD publishes the Fair Market Rent and income-limit tables on separate cycles, so these two verdicts come from different table years. Each verdict names its own year — cite them separately rather than as one vintage.",
+          }
+        : {}),
+    };
+  }
+
+  return { entityid, area, table_years, rent_check, income_check };
 }
 
 /**
@@ -634,9 +660,28 @@ export function createServer() {
         }
         const params: Record<string, string> = {};
         if (args.year) params.year = String(args.year);
+        // The year that satisfies /fmr/data can be refused outright by /il/data,
+        // which publishes later: live 2026-09-14, /fmr/data defaulted to 2027
+        // while /il/data answered `{"error":"Invalid year"}` with HTTP 400 for
+        // year=2027. Raw, that refusal names the endpoint and not the fix, and
+        // it takes down the rent half that would have worked. Say what happened
+        // and name a call that answers.
         const [fmrData, ilData] = await Promise.all([
           hasRent ? hudGet(`/fmr/data/${encodeURIComponent(id)}`, params) : Promise.resolve(undefined),
-          hasIncome ? hudGet(`/il/data/${encodeURIComponent(id)}`, params) : Promise.resolve(undefined),
+          hasIncome
+            ? hudGet(`/il/data/${encodeURIComponent(id)}`, params).catch((err) => {
+                if (err instanceof HttpError && err.status === 400 && /invalid year/i.test(err.message)) {
+                  const asked = params.year ? ` for ${params.year}` : "";
+                  const rentHalf = hasRent
+                    ? ` To answer the rent half at that year on its own, call fmr_lookup with year${asked ? ` ${params.year}` : ""}.`
+                    : "";
+                  throw new Error(
+                    `HUD's income-limit tables publish on a later cycle than the FMR tables, and the income table has no data${asked} (HUD answered "Invalid year"). Re-run affordability_check with no year: each table then answers from its own latest, and table_years reports both.${rentHalf}`,
+                  );
+                }
+                throw err;
+              })
+            : Promise.resolve(undefined),
         ]);
         return asJson(withScope(shapeAffordability({ entityid: id, fmrData, ilData, rent, bedrooms, income, size })));
       }
