@@ -37,12 +37,18 @@ function bodyOf(res: any) {
 
 // Response shapes below mirror HUD's documented API examples (fmr/il/usps/list);
 // field names are quoted from HUD's own response samples.
+//
+// metro_status is "1.0" because that is what HUD serves — captured live from
+// /fmr/data/3600599999 on 2026-09-14. This fixture said "1" until then, a shape
+// the API does not produce, which is why 48 green tests could not see that
+// `metro_status === "1"` is false for every metro FMR area in the country.
+// The sibling flag smallarea_status really is served as "1", no decimal.
 const FMR_PAYLOAD = {
   data: {
     county_name: "Bronx County",
     counties_msa: "New York-White Plains, NY-NJ HUD Metro FMR Area",
     town_name: "",
-    metro_status: "1",
+    metro_status: "1.0",
     metro_name: "New York-White Plains, NY-NJ HUD Metro FMR Area",
     smallarea_status: "0",
     basicdata: {
@@ -114,6 +120,8 @@ describe("mcp-fairrent server", () => {
     expect(call[1].headers["User-Agent"]).toMatch(/^mcp-fairrent\/\d/);
     const body = bodyOf(res);
     expect(body.area).toBe("Bronx County");
+    // HUD serves metro_status "1.0", so a string compare against "1" reports
+    // false for an area that IS a metro FMR area. Compare numerically.
     expect(body.is_metro).toBe(true);
     expect(body.fair_market_rents.two_br).toBe("2213.0");
     expect(body.fair_market_rents.four_br).toBe("3015.0");
@@ -126,7 +134,7 @@ describe("mcp-fairrent server", () => {
       mockFetch({
         data: {
           metro_name: "Some Metro",
-          metro_status: "1",
+          metro_status: "1.0",
           basicdata: [
             { "Two-Bedroom": "1000", year: "2025" },
             { "Two-Bedroom": "1100", year: "2026" },
@@ -246,7 +254,7 @@ describe("mcp-fairrent server", () => {
     vi.stubGlobal(
       "fetch",
       // real small-area shape: year only at top level, none per array row
-      mockFetch({ data: { metro_name: "M", metro_status: "1", year: "2026", basicdata: [{ zip_code: "10451", "Two-Bedroom": "2213.0" }] } }),
+      mockFetch({ data: { metro_name: "M", metro_status: "1.0", year: "2026", basicdata: [{ zip_code: "10451", "Two-Bedroom": "2213.0" }] } }),
     );
     const client = await connect();
     const res = await client.callTool({ name: "fmr_lookup", arguments: { entityid: "METRO123" } });
@@ -556,7 +564,7 @@ describe("mcp-fairrent server", () => {
       vi.stubEnv("HUD_API_TOKEN", "test-token");
       vi.stubGlobal(
         "fetch",
-        mockFetch({ data: { metro_name: "M", metro_status: "1", smallarea_status: "1", year: "2026", basicdata: [{ zip_code: "10451", "Two-Bedroom": "2213.0" }] } }),
+        mockFetch({ data: { metro_name: "M", metro_status: "1.0", smallarea_status: "1", year: "2026", basicdata: [{ zip_code: "10451", "Two-Bedroom": "2213.0" }] } }),
       );
       const client = await connect();
       {

@@ -202,6 +202,15 @@ function ratio(v: unknown): number | undefined {
   return Number.isFinite(n) ? Math.round(n * 10000) / 10000 : undefined;
 }
 
+// HUD's boolean-ish flags arrive as strings, and NOT in one spelling: live on
+// 2026-09-14, /fmr/data/3600599999 served metro_status "1.0" while the same
+// response's smallarea_status (on a small-area metro) was "1". A string compare
+// against "1" therefore read false for every metro FMR area in the country.
+// Compare numerically so either spelling of the same one is the same answer.
+function isFlagSet(v: unknown): boolean {
+  return Number(v) === 1;
+}
+
 // HUD signals "no rows for that value" as HTTP 404 wrapping [{error: "No data
 // found using the value ..."}] (verified live 2026-08-23 with the retired ZIP
 // 10048). For the crosswalk tools that is an ANSWER, not an error.
@@ -234,8 +243,8 @@ function shapeFmr(data: any) {
     area: data?.county_name || data?.metro_name || data?.town_name,
     counties_msa: data?.counties_msa || undefined,
     metro_name: data?.metro_name || undefined,
-    is_metro: data?.metro_status === "1",
-    small_area_fmrs: data?.smallarea_status === "1",
+    is_metro: isFlagSet(data?.metro_status),
+    small_area_fmrs: isFlagSet(data?.smallarea_status),
     fair_market_rents: Array.isArray(bd) ? bd.map(rentsOf) : rentsOf(bd),
   };
 }
