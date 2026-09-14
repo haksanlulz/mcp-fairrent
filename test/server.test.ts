@@ -1263,6 +1263,30 @@ describe("environment knobs", () => {
     expect(elapsed).toBeGreaterThanOrEqual(2 * 400 - 20); // 2 x 400ms, less timer slop
   });
 
+  it("gives up rather than sleep past the retry deadline", async () => {
+    // withRetry's other exit: RETRY_DEADLINE_MS bounds total wall clock, because
+    // an MCP client has its own call timeout and three stacked 15s HTTP timeouts
+    // would blow past it. Nothing exercised that break, and a suite pinned to a
+    // 0ms ladder can never reach it by accident -- the ladder has to be long
+    // enough that the NEXT attempt could not finish in time: deadline 40s less
+    // the 15s HTTP timeout leaves 25s, so a 30s rung is over the line on the
+    // first failure. The give-up is therefore instant, which is the assertion.
+    vi.stubEnv("HUD_API_TOKEN", "test-token");
+    vi.stubEnv("HUD_RETRY_BACKOFF_MS", "30000");
+    const busy = mockFetch({ error: "rate limited" }, 429);
+    vi.stubGlobal("fetch", busy);
+    const client = await connect();
+    const started = Date.now();
+    const res: any = await client.callTool({ name: "fmr_lookup", arguments: { entityid: "3600599999" } });
+    const elapsed = Date.now() - started;
+    expect(res.isError).toBe(true);
+    // A 429 is retryable, so only the deadline can stop it at one attempt.
+    expect(busy).toHaveBeenCalledTimes(1);
+    expect(elapsed).toBeLessThan(2000);
+    // And it reports HUD's own failure, not the deadline as if it were one.
+    expect(String(res.content[0].text)).toMatch(/HUD \/fmr\/data\/3600599999/);
+  });
+
   it("a nonsense HUD_HTTP_ATTEMPTS still makes the request and reports the real error", async () => {
     // Before: Number("oops") = NaN, the for-loop never executed, and the server
     // threw an unassigned `last` -- the tool answered "Error: undefined", which
