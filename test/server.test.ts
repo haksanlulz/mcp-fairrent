@@ -228,6 +228,60 @@ describe("mcp-fairrent server", () => {
     expect(body.counties[0].fips_code).toBe("3600599999");
   });
 
+  // New England is the one region where a HUD "county" row is really a town,
+  // and the only region where dropping town_name changes what a caller sees --
+  // which is why no fixture covered it until now. Rows below are a live capture
+  // of /fmr/listCounties/CT, 2026-09-14 (169 rows, 8 distinct county_name
+  // values, 29 of them "Hartford County").
+  const CT_COUNTIES_PAYLOAD = {
+    data: [
+      { state_code: "CT", fips_code: "0900302060", county_name: "Hartford County", town_name: "Avon town", category: "County" },
+      { state_code: "CT", fips_code: "0900304300", county_name: "Hartford County", town_name: "Berlin town", category: "County" },
+    ],
+  };
+
+  it("list_counties keeps the town that distinguishes a New England row", async () => {
+    vi.stubEnv("HUD_API_TOKEN", "test-token");
+    vi.stubGlobal("fetch", mockFetch(CT_COUNTIES_PAYLOAD));
+    const client = await connect();
+    const body = bodyOf(await client.callTool({ name: "list_counties", arguments: { state: "CT" } }));
+    const [avon, berlin] = body.counties;
+    // Same county label, different entity ids: without town_name the caller is
+    // choosing blind between 29 rows and can pick the wrong town's FMR.
+    expect(avon.county_name).toBe(berlin.county_name);
+    expect(avon.fips_code).not.toBe(berlin.fips_code);
+    expect(avon.town_name).toBe("Avon town");
+    expect(berlin.town_name).toBe("Berlin town");
+    expect(avon.area).toBe("Avon town, Hartford County");
+    expect(avon.category).toBe("County");
+  });
+
+  it("area labels lead with the town where HUD gives one", async () => {
+    // /il/data/0900901220 live, 2026-09-14: HUD answers with the planning
+    // region AND the town, and only the town says which of the region's rows
+    // this is.
+    vi.stubEnv("HUD_API_TOKEN", "test-token");
+    vi.stubGlobal("fetch", mockFetch({
+      data: {
+        county_name: "Naugatuck Valley Planning Region, CT",
+        town_name: "Ansonia town",
+        metro_name: "Waterbury-Shelton, CT",
+        metro_status: "1.0",
+        year: "2026",
+        median_income: 114000,
+        very_low: { il50_p3: 56050 },
+        extremely_low: { il30_p3: 33650 },
+        low: { il80_p3: 89700 },
+      },
+    }));
+    const client = await connect();
+    const body = bodyOf(await client.callTool({
+      name: "income_limits",
+      arguments: { entityid: "0900901220", household_size: 3 },
+    }));
+    expect(body.area).toBe("Ansonia town, Naugatuck Valley Planning Region, CT");
+  });
+
   it("tools fail with a get-a-token hint when HUD_API_TOKEN is unset", async () => {
     vi.stubEnv("HUD_API_TOKEN", "");
     const client = await connect();

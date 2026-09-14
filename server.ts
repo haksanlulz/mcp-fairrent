@@ -218,6 +218,19 @@ function isNoDataError(err: unknown): boolean {
   return err instanceof Error && /No data found using the value/i.test(err.message);
 }
 
+// In the six New England states an FMR area is a TOWN, not a county: HUD
+// returns one row per town and the county label repeats across them (live
+// 2026-09-14: /fmr/listCounties/CT is 169 rows carrying 8 distinct county
+// names, 29 of them "Hartford County", each a different entity id). Where HUD
+// gives a town it is the part that identifies the area, so it leads the label;
+// everywhere else town_name is "" or null and the label is what it always was.
+function areaLabel(d: any): string | undefined {
+  const base = d?.county_name || d?.metro_name;
+  const town = d?.town_name;
+  if (town && base && town !== base) return `${town}, ${base}`;
+  return base || town || undefined;
+}
+
 function text(s: string) {
   return { content: [{ type: "text" as const, text: s }] };
 }
@@ -240,7 +253,7 @@ function shapeFmr(data: any) {
   });
   const bd = data?.basicdata;
   return {
-    area: data?.county_name || data?.metro_name || data?.town_name,
+    area: areaLabel(data),
     counties_msa: data?.counties_msa || undefined,
     metro_name: data?.metro_name || undefined,
     is_metro: isFlagSet(data?.metro_status),
@@ -257,7 +270,7 @@ function shapeIncomeLimits(data: any, size?: number) {
     return Array.from({ length: 8 }, (_, i) => block[`${prefix}_p${i + 1}`]);
   };
   return {
-    area: data?.county_name || data?.metro_name,
+    area: areaLabel(data),
     metro_name: data?.metro_name || undefined,
     year: data?.year,
     median_income: data?.median_income,
@@ -278,7 +291,7 @@ function shapeMtsp(data: any, size?: number) {
     return Array.from({ length: 8 }, (_, i) => block[`${prefix}_p${i + 1}`]);
   };
   return {
-    area: data?.county_name || data?.metro_name,
+    area: areaLabel(data),
     metro_name: data?.metro_name || undefined,
     year: data?.year,
     median_income: data?.median_income,
@@ -684,11 +697,15 @@ export function createServer() {
         const data = await hudGet(`/fmr/statedata/${state}`, params);
         // statedata returns two row shapes. A COUNTY row carries county_name +
         // fips_code; a METRO row carries metro_name + code and none of
-        // county_name / name / town_name, so metro_name has to be in the chain
+        // county_name / name / town_name, so metro_name has to be in the label
         // or every metro in the state comes back name:undefined (live
-        // /fmr/statedata/NY, 2026-09-14: 14 of 14 metro rows).
+        // /fmr/statedata/NY, 2026-09-14: 14 of 14 metro rows). areaLabel also
+        // leads with town_name where HUD gives one, which is the whole of CT:
+        // 169 county rows over 9 planning-region labels. `r.name` stays as the
+        // tail of the chain for HUD's documented sample shape.
         const shapeRow = (r: any) => ({
-          name: r.county_name || r.metro_name || r.name || r.town_name,
+          name: areaLabel(r) || r.name,
+          town_name: r.town_name || undefined,
           code: r.fips_code || r.code,
           metro_name: r.metro_name || undefined,
           efficiency: r.Efficiency,
@@ -752,10 +769,18 @@ export function createServer() {
         const state = String(args.state ?? "").trim().toUpperCase();
         if (!/^[A-Z]{2}$/.test(state)) throw new Error("state must be a 2-letter code (e.g. 'NY')");
         const data = await hudGet(`/fmr/listCounties/${state}`);
+        // town_name and category are what make a New England row identifiable.
+        // Without town_name, CT's 169 rows collapse to 8 repeated county labels
+        // -- 29 rows reading "Hartford County", 29 different entity ids, nothing
+        // to choose between them (live 2026-09-14) -- in step 2 of the README's
+        // own flow, where picking the wrong one answers for the wrong town.
         const counties = (Array.isArray(data) ? data : []).map((c: any) => ({
           county_name: c.county_name,
+          town_name: c.town_name || undefined,
+          area: areaLabel(c),
           fips_code: c.fips_code,
           state_code: c.state_code,
+          category: c.category || undefined,
         }));
         return asJson(withScope({ state, counties }));
       }
