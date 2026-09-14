@@ -121,11 +121,31 @@ try {
   ok("api_token is required and sensitive");
 
   const args = (cfg.args ?? []).map(sub);
-  const env = { ...process.env };
+
+  // A host hands the server the manifest's env block, not the operator's shell.
+  // Copying process.env meant a variable the manifest FORGOT was supplied by
+  // inheritance -- so the live round trip below would have answered with the
+  // token from this shell even if mcp_config.env injected nothing, which is one
+  // of the two things this probe exists to catch. Start from the handful of OS
+  // variables a child needs to run at all, then add the manifest's own.
+  const OS_ESSENTIAL = [
+    "PATH", "Path", "PATHEXT", "SystemRoot", "SystemDrive", "windir", "COMSPEC",
+    "TEMP", "TMP", "TMPDIR", "HOME", "HOMEDRIVE", "HOMEPATH", "USERPROFILE",
+    "APPDATA", "LOCALAPPDATA", "PROGRAMFILES", "PROGRAMDATA", "NUMBER_OF_PROCESSORS",
+    "PROCESSOR_ARCHITECTURE", "OS", "LANG", "LC_ALL",
+  ];
+  const env = {};
+  for (const k of OS_ESSENTIAL) if (process.env[k] !== undefined) env[k] = process.env[k];
   for (const [k, v] of Object.entries(cfg.env ?? {})) env[k] = sub(v);
   if (!("HUD_API_TOKEN" in (cfg.env ?? {}))) fail("mcp_config.env does not inject HUD_API_TOKEN");
 
-  const child = spawn(cfg.command, args, { cwd: dir, env, stdio: ["pipe", "pipe", "pipe"], shell: true });
+  // Quote every arg. With shell:true the shell re-splits the command line, and
+  // the install directory here is under the user profile -- measured on a
+  // tmpdir containing a space, the unquoted form exits 1 with "Cannot find
+  // module 'C:\\Users\\abish\\AppData\\Local\\Temp\\probe'" and the quoted form
+  // exits 0. That failure reads as a FAIL of the bundle and is a claim about
+  // the probe. pack-probe.mjs quotes its bin shim for the same reason.
+  const child = spawn(cfg.command, args.map((a) => `"${a}"`), { cwd: dir, env, stdio: ["pipe", "pipe", "pipe"], shell: true });
   let out = "";
   let err = "";
   child.stdout.on("data", (d) => (out += d));
