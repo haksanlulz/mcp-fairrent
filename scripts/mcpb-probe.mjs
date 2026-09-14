@@ -14,7 +14,7 @@
  *
  * Run: npm run verify:mcpb   (after npm run build:mcpb)
  */
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -22,8 +22,19 @@ import { fileURLToPath } from "node:url";
 import { inflateRawSync } from "node:zlib";
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+
+// Teardown never decides the verdict, but it has to actually run, and it did
+// not on either path. Measured 2026-09-14: process.exit() inside fail()
+// abandons the stack rather than unwinding it, so the `finally` at the bottom
+// never ran on a FAIL (`try { process.exit(1) } finally { console.log("x") }`
+// prints nothing); and on a PASS, child.kill() under shell:true killed the
+// shell, not the node grandchild, which still held the directory as its cwd --
+// so rmSync threw EBUSY into a bare catch. One unpacked 12MB bundle leaked per
+// run, on both paths, 22 of them before anyone counted.
+let cleanup = () => {};
 const fail = (m) => {
   console.error(`FAIL: ${m}`);
+  cleanup();
   process.exit(1);
 };
 const ok = (m) => console.log(`  ok  ${m}`);
@@ -89,6 +100,21 @@ function unzip(buf, dest) {
 }
 
 const dir = mkdtempSync(join(tmpdir(), "mcpbprobe-"));
+let child;
+cleanup = () => {
+  // shell:true means child.pid is the shell's, not the server's. Kill the tree,
+  // or the node grandchild is still sitting in `dir` when rmSync runs.
+  if (child?.pid) {
+    if (process.platform === "win32") spawnSync("taskkill", ["/pid", String(child.pid), "/T", "/F"], { stdio: "ignore" });
+    else child.kill("SIGKILL");
+  }
+  try {
+    rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 250 });
+  } catch (e) {
+    // Still not the artifact's failure, but say so rather than swallow it.
+    console.error(`  warn  could not remove ${dir}: ${e.code}`);
+  }
+};
 try {
   const entries = unzip(readFileSync(bundlePath), dir);
   ok(`unpacked ${entries} entries`);
@@ -145,7 +171,7 @@ try {
   // module 'C:\\Users\\abish\\AppData\\Local\\Temp\\probe'" and the quoted form
   // exits 0. That failure reads as a FAIL of the bundle and is a claim about
   // the probe. pack-probe.mjs quotes its bin shim for the same reason.
-  const child = spawn(cfg.command, args.map((a) => `"${a}"`), { cwd: dir, env, stdio: ["pipe", "pipe", "pipe"], shell: true });
+  child = spawn(cfg.command, args.map((a) => `"${a}"`), { cwd: dir, env, stdio: ["pipe", "pipe", "pipe"], shell: true });
   let out = "";
   let err = "";
   child.stdout.on("data", (d) => (out += d));
@@ -209,13 +235,7 @@ try {
   });
   console.log("PASS — the bundle unpacks, launches from its manifest, and serves its tools.");
 } finally {
-  // Teardown never decides the verdict: an EBUSY on a temp directory is not a
-  // failure of the artifact under test.
-  try {
-    rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
-  } catch {
-    /* leave it to the OS */
-  }
+  cleanup();
 }
 // The spawned child can keep the event loop alive after kill(); exit explicitly
 // so a passing probe does not hang the rung it is wired into.
