@@ -86,7 +86,7 @@ An address is usually a ZIP, but `fmr_lookup` and `income_limits` key on a 10-di
 2. `list_counties` for that state → the county's 10-digit entity id (Bronx County → `3600599999`).
 3. `fmr_lookup` and `income_limits` with that entity id → the bedroom rents and the voucher line.
 
-Worked example: *a Bronx landlord wants $2,600 for a 2-bedroom. Is that above Fair Market Rent, and would a family of three earning $48k qualify for a voucher here?* That's `affordability_check` in one call — the entity id with `rent: 2600, bedrooms: 2, income: 48000, household_size: 3` — and the answer comes back computed. This is the sentence a housing counselor writes down, quoted from the two `verdict` strings as returned:
+Worked example: *a Bronx landlord wants $2,600 for a 2-bedroom. Is that above Fair Market Rent, and would a family of three earning $48k qualify for a voucher here?* That's `affordability_check` in one call — the entity id with `rent: 2600, bedrooms: 2, income: 48000, household_size: 3` — and the answer comes back computed. This is the sentence a housing counselor writes down, quoted from the two `verdict` strings, sentence-cased and joined — the fields themselves lead lower-case and carry no terminal period:
 
 > Rent $2,600 is $371 (12.5%) below the 2027 Fair Market Rent of $2,971 for a two-bedroom in Bronx County, NY. A 3-person household with annual income $48,000 in Bronx County, NY is very low income (at or below 50% of area median) under the 2026 HUD income limits — generally income-eligible for a Section 8 voucher.
 

@@ -492,7 +492,10 @@ describe("mcp-fairrent server", () => {
     }
   });
 
-  // affordability_check: the README's worked example answered server-side.
+  // affordability_check over the base fixtures. NOT the README's worked
+  // example: that one is pinned against FMR_2027/IL_2026 in "names both table
+  // years and flags the mismatch" below, which is the fixture pair carrying the
+  // figures the README actually prints.
   // Fixture math against IL_PAYLOAD/FMR_PAYLOAD (household of 3): 30% line 32900,
   // 50% line 54850, 80% line 87750; two-bedroom FMR 2213, year 2026.
   describe("affordability_check", () => {
@@ -501,7 +504,7 @@ describe("mcp-fairrent server", () => {
       ["/il/data/", IL_PAYLOAD],
     ]);
 
-    it("answers the README worked example: rent gap and income bands in one call", async () => {
+    it("answers a combined rent-and-income call: rent gap and income bands together", async () => {
       vi.stubEnv("HUD_API_TOKEN", "test-token");
       const fetchMock = BOTH();
       vi.stubGlobal("fetch", fetchMock);
@@ -858,6 +861,23 @@ describe("affordability_check across two table years", () => {
     // difference is visible without reading both strings.
     expect(body.rent_check.verdict).toMatch(/2027 Fair Market Rent/);
     expect(body.income_check.verdict).toMatch(/2026 HUD income limits/);
+
+    // This call IS the README's worked example, and its blockquote is these two
+    // strings sentence-cased and joined. Pinning them here is what makes
+    // README's "against fixtures that mirror HUD's documented response samples
+    // -- including this README's worked example" true. Until now the test
+    // carrying that name asserted the OLD example ($2,213 / 2026 / +$387),
+    // which the README no longer prints anywhere.
+    expect(body.rent_check.verdict).toBe(
+      "rent $2,600 is $371 (12.5%) below the 2027 Fair Market Rent of $2,971 for a two-bedroom in Bronx County, NY",
+    );
+    expect(body.income_check.verdict).toBe(
+      "a 3-person household with annual income $48,000 in Bronx County, NY is very low income (at or below 50% of area median) under the 2026 HUD income limits — generally income-eligible for a Section 8 voucher",
+    );
+    // The three bands printed under the blockquote.
+    expect(body.income_check.categories.extremely_low_30pct.limit).toBe(45850);
+    expect(body.income_check.categories.very_low_50pct.limit).toBe(76350);
+    expect(body.income_check.categories.low_80pct.limit).toBe(122150);
   });
 
   it("does not flag a mismatch when both tables answer the same year", async () => {
