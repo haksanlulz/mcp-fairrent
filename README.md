@@ -146,12 +146,12 @@ npm run verify:mcpb # unpack that bundle and launch it the way a host does
 
 Two tiers, already split by script. `npm test` is the offline tier: vitest, in-memory MCP transport, `fetch` mocked, no token. `npm run smoke` is the live tier: one real HUD call per tool, needs `HUD_API_TOKEN`, exits 0 with a skip line without it. CI runs only the offline tier.
 
-Counts, measured 2026-09-14:
+Counts, measured 2026-09-14 after the last change of the day:
 
 ```bash
-find . -name '*.ts' -not -path './node_modules/*' -not -path './dist/*' -not -path './build/*' -not -path './test/*' -not -name smoke.ts | xargs wc -l   # app: 958 lines (index.ts + server.ts; smoke.ts is another 65)
-find ./test -name '*.test.ts' | xargs wc -l                                                                                                                # tests: 1321 lines, 2 files
-npm test                                                                                                                                                   # 65 tests, 65 passed
+find . -name '*.ts' -not -path './node_modules/*' -not -path './dist/*' -not -path './build/*' -not -path './test/*' -not -name smoke.ts | xargs wc -l   # app: 1013 lines (index.ts + server.ts; smoke.ts is another 70)
+find ./test -name '*.test.ts' | xargs wc -l                                                                                                                # tests: 1438 lines, 2 files
+npm test                                                                                                                                                   # 71 tests, 71 passed
 ```
 
 `build/` is excluded because `npm run build:mcpb` stages a copy of the server there.
@@ -161,6 +161,8 @@ Layers. `test/server.test.ts` drives every tool end to end through the SDK clien
 Mutation probe, 2026-09-11: widened the `affordability_check` bedrooms bound in `server.ts` from `> 4` to `> 5`. One test went red: `affordability_check > enforces the table bounds: bedrooms 0-4, household_size 1-8`. 47 others stayed green. Source restored, `git diff --quiet -- server.ts` clean.
 
 Probed again 2026-09-14, once per change landed that day: reverting the metro-status comparison, the statedata name chain, the `FMR Percentile` field, the `?? r.geoid` ZIP fallback, `town_name` on a county row, the town-first area label, the `table_years` block, the income-year error, and the validated env knobs each turned their own test red and nothing else. The retry tests were re-probed after the backoff ladder was flattened for speed — making a 404 retryable, and a 429 not, still fails them.
+
+Fix round, same day. Two by mutation: deleting the backoff sleep from `withRetry` (the old timing test passed, its replacement fails) and deleting the retry-deadline break (the new deadline test hangs past its timeout). The rest were written red-first instead, which is the same evidence from the other side — the `list_counties` CT note, the Massachusetts note without the CT half, the kept rent verdict on a year the income table refuses, and the un-rewritten "Invalid year" each failed against the code as it stood before the change. The bundle probe was probed in both directions; GAUNTLET §6 has it.
 
 Call-count assertions (`toHaveBeenCalledTimes`, `not.toHaveBeenCalled`) were audited the same day: 12 sites, 12 kept, 0 pruned. Each one pins a contract (which endpoint a call hit, validation firing before the network, retry counts, cache hits), not that a function ran. Policy: assert behavior and payloads, never bare invocation.
 
