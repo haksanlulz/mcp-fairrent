@@ -514,6 +514,15 @@ function withScope<T extends Record<string, unknown>>(result: T): T & { eligibil
   return { ...result, eligibility_scope: ELIGIBILITY_SCOPE };
 }
 
+// One string for every entityid-missing error, so the four cannot drift apart
+// again. HUD rejects a raw ZIP, a bare county FIPS and a state code alike --
+// live 2026-09-14, /fmr/data/10451, /fmr/data/36005 and /fmr/data/NY each
+// answered 400 while /fmr/data/3600599999 answered 200, and /il/data behaves
+// the same. Two of these errors used to offer a ZIP or a state code, so a model
+// that read the validation message and retried as told got a 400 from HUD.
+const ENTITYID_REQUIRED =
+  "entityid is required (10-digit county FIPS + 99999 or metro CBSA code; derive from a ZIP via zip_crosswalk then list_counties)";
+
 export function createServer() {
   const server = new Server(
     { name: "mcp-fairrent", version: "1.1.0" },
@@ -656,7 +665,7 @@ export function createServer() {
     switch (name) {
       case "fmr_lookup": {
         const id = String(args.entityid ?? "").trim();
-        if (!id) throw new Error("entityid is required (state code, county FIPS, CBSA, or ZIP)");
+        if (!id) throw new Error(ENTITYID_REQUIRED);
         const params: Record<string, string> = {};
         if (args.year) params.year = String(args.year);
         const data = await hudGet(`/fmr/data/${encodeURIComponent(id)}`, params);
@@ -664,7 +673,7 @@ export function createServer() {
       }
       case "income_limits": {
         const id = String(args.entityid ?? "").trim();
-        if (!id) throw new Error("entityid is required (state code, county FIPS, or CBSA)");
+        if (!id) throw new Error(ENTITYID_REQUIRED);
         const size = args.household_size !== undefined ? Number(args.household_size) : undefined;
         if (size !== undefined && (!Number.isInteger(size) || size < 1 || size > 8)) {
           throw new Error("household_size must be an integer 1-8");
@@ -677,7 +686,7 @@ export function createServer() {
       case "affordability_check": {
         const id = String(args.entityid ?? "").trim();
         if (!id) {
-          throw new Error("entityid is required (10-digit county FIPS + 99999 or metro CBSA code; derive from a ZIP via zip_crosswalk then list_counties)");
+          throw new Error(ENTITYID_REQUIRED);
         }
         const hasRent = args.rent !== undefined && args.rent !== null;
         const hasIncome = args.income !== undefined && args.income !== null;
@@ -780,7 +789,7 @@ export function createServer() {
       }
       case "mtsp_income_limits": {
         const id = String(args.entityid ?? "").trim();
-        if (!id) throw new Error("entityid is required (10-digit county FIPS + 99999 or metro CBSA code)");
+        if (!id) throw new Error(ENTITYID_REQUIRED);
         const size = args.household_size !== undefined ? Number(args.household_size) : undefined;
         if (size !== undefined && (!Number.isInteger(size) || size < 1 || size > 8)) {
           throw new Error("household_size must be an integer 1-8");

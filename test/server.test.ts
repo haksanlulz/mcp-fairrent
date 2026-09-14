@@ -35,6 +35,11 @@ function bodyOf(res: any) {
   return JSON.parse(res.content[0].text);
 }
 
+// The tools that take an entityid. Both the schema description and the thrown
+// error have to route a ZIP through the crosswalk rather than offer it as an
+// entityid, so both halves are checked against this one list.
+const ENTITYID_TOOLS = ["fmr_lookup", "income_limits", "affordability_check", "mtsp_income_limits"] as const;
+
 // Response shapes below mirror HUD's documented API examples (fmr/il/usps/list);
 // field names are quoted from HUD's own response samples.
 //
@@ -362,12 +367,35 @@ describe("mcp-fairrent server", () => {
     // a directly acceptable entityid.
     const client = await connect();
     const { tools } = await client.listTools();
-    for (const name of ["fmr_lookup", "income_limits", "affordability_check"]) {
+    for (const name of ENTITYID_TOOLS) {
       const tool = tools.find((t) => t.name === name)!;
       const desc = (tool.inputSchema.properties as any).entityid.description as string;
       expect(desc).toContain("zip_crosswalk");
       expect(desc).toContain("99999");
     }
+  });
+
+  it("the thrown entityid error says the same thing the schema does", async () => {
+    // The schema half of this was fixed; the ERROR half still offered "state
+    // code ... or ZIP" and no test covered it. A model that hits the validation
+    // error reads it and retries with what it names, and HUD 400s a raw ZIP, a
+    // bare county FIPS and a state code alike (live 2026-09-14).
+    vi.stubEnv("HUD_API_TOKEN", "test-token");
+    const fetchMock = mockFetch(FMR_PAYLOAD);
+    vi.stubGlobal("fetch", fetchMock);
+    const client = await connect();
+    for (const name of ENTITYID_TOOLS) {
+      const args: Record<string, unknown> = { entityid: "" };
+      if (name === "affordability_check") Object.assign(args, { rent: 2600, bedrooms: 2 });
+      const res: any = await client.callTool({ name, arguments: args });
+      expect(res.isError, name).toBe(true);
+      const msg = String(res.content[0].text);
+      expect(msg, name).toContain("zip_crosswalk");
+      expect(msg, name).toContain("99999");
+      expect(msg, name).not.toMatch(/state code/i); // HUD 400s /fmr/data/NY
+      expect(msg, name).not.toMatch(/or ZIP\)/i); // and /fmr/data/10451
+    }
+    expect(fetchMock).not.toHaveBeenCalled(); // the error fires before any HUD call
   });
 
   it("spaces request STARTS by the throttle gap, not gap + response latency", async () => {
