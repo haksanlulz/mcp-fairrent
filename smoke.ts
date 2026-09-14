@@ -1,4 +1,4 @@
-#!/usr/bin/env -S npx tsx
+#!/usr/bin/env node
 // Live smoke: one real call per tool against the HUD USER API.
 // Needs HUD_API_TOKEN (free, one-screen signup at huduser.gov). Skips if unset.
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
