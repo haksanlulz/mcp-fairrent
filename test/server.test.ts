@@ -904,7 +904,16 @@ describe("affordability_check across two table years", () => {
       arguments: { entityid: "3600599999", income: 48000, household_size: 3, year: "2027" },
     });
     expect(res.isError).toBe(true);
-    expect(String(res.content[0].text)).toMatch(/income-limit tables publish on a later cycle/);
+    const msg = String(res.content[0].text);
+    expect(msg).toMatch(/income-limit tables publish on a later cycle/);
+    // And it does not blame the publication lag ALONE. Live 2026-09-14,
+    // /il/data answers the same 400 "Invalid year" for 2027 (ahead of the
+    // income table) and for 2010 (behind both tables, /fmr/data refuses it
+    // too), so a past year reaching this branch was being told the income
+    // table simply had not published yet.
+    expect(msg).toMatch(/behind the tables HUD still serves/);
+    // No rent half asked for, so there is no table_years block to point at.
+    expect(msg).not.toMatch(/table_years/);
   });
 
   it("does not rewrite an 'Invalid year' that arrives when no year was asked for", async () => {

@@ -819,8 +819,18 @@ export function createServer() {
                 // name no year at all. HUD's own words are the honest answer
                 // on that branch.
                 if (err instanceof HttpError && err.status === 400 && params.year && /invalid year/i.test(err.message)) {
+                  // Do not name one cause: this refusal has two and they are
+                  // indistinguishable here. Live 2026-09-14, /il/data answered
+                  // the same byte-identical 400 "Invalid year" for a year AHEAD
+                  // of the income table (2027, which is the FMR table's own
+                  // default) and for one BEHIND both tables (2010, which
+                  // /fmr/data refuses too). Only the first is the publication
+                  // lag, and telling them apart would take a second call. A
+                  // typo'd year is safe to exclude: /il/data?year=banana
+                  // answers "Missing or invalid value in the query
+                  // parameter(s)", which this regex does not match.
                   const explain =
-                    `HUD's income-limit tables publish on a later cycle than the FMR tables, and the income table has no data for ${params.year} (HUD answered "Invalid year"). Re-run affordability_check with no year: each table then answers from its own latest, and table_years reports both.`;
+                    `HUD's income-limit table has no data for ${params.year} (HUD answered "Invalid year") — either that year is behind the tables HUD still serves, or it is ahead of them, since HUD's income-limit tables publish on a later cycle than the FMR tables. Re-run affordability_check with no year: each table then answers from its own latest${hasRent ? ", and table_years reports both" : ""}.`;
                   // The rent half already answered 200 for this same year, and
                   // failing the whole call threw that verdict away. Carry the
                   // refusal in place of the half that did not answer instead.
