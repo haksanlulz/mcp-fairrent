@@ -76,7 +76,11 @@ ok(`tarball is ${files.length} files, no sources or tests`);
 const dir = mkdtempSync(join(tmpdir(), "packprobe-"));
 try {
   writeFileSync(join(dir, "package.json"), JSON.stringify({ name: "packprobe", version: "1.0.0", private: true }));
-  const inst = spawnSync("npm", ["install", "--silent", provided ? tgz : join(repo, tgz)], { cwd: dir, shell: true, encoding: "utf8" });
+  // Quoted for the reason build-mcpb.mjs states: shell:true re-splits, and this
+  // argument is an absolute path into the clone. A clone under a path with a
+  // space otherwise fails the cold install and reads as a bad tarball.
+  const tarball = provided ? tgz : join(repo, tgz);
+  const inst = spawnSync("npm", ["install", "--silent", `"${tarball}"`], { cwd: dir, shell: true, encoding: "utf8" });
   if (inst.status !== 0) fail(`cold install failed: ${inst.stderr?.slice(0, 400)}`);
   ok("installed into a clean project");
 

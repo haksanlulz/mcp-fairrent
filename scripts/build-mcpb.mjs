@@ -25,7 +25,16 @@ const fail = (m) => {
   process.exit(1);
 };
 const ok = (m) => console.log(`  ok  ${m}`);
-const run = (cmd, args, cwd) => spawnSync(cmd, args, { cwd, shell: true, stdio: "inherit" });
+// shell:true re-splits the command line, so every path argument is quoted. Two
+// call sites below hand absolute paths in: `mcpb validate <stage>/manifest.json`
+// and `mcpb pack <stage> <bundle>`. On a clone under "C:\Users\John Smith\..."
+// the shell splits at the space and mcpb is handed a path that does not exist,
+// which reads as a broken manifest. Measured 2026-09-14 on a tmpdir containing a
+// space: spawnSync("node", [p], {shell:true}) exits 1 with "Cannot find module
+// 'C:\Users\abish\AppData\Local\Temp\spacetest'"; quoted, it exits 0. Safe for
+// the other two call sites -- npm "run" "build" parses the same either way.
+// scripts/mcpb-probe.mjs and scripts/pack-probe.mjs quote for the same reason.
+const run = (cmd, args, cwd) => spawnSync(cmd, args.map((a) => `"${a}"`), { cwd, shell: true, stdio: "inherit" });
 
 const pkg = JSON.parse(readFileSync(join(repo, "package.json"), "utf8"));
 const manifest = JSON.parse(readFileSync(join(repo, "manifest.json"), "utf8"));
