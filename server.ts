@@ -429,8 +429,14 @@ function shapeAffordability(input: {
   size?: number;
 }) {
   const { entityid, fmrData, ilData, rent, bedrooms, income, size } = input;
+  // The income half can arrive as a refusal rather than a table: HUD's income
+  // limits publish later than the FMRs, so a year the FMR table answers can be
+  // one the income table rejects. The handler hands that over as a sentinel
+  // instead of failing the call, because the rent half already answered.
+  const ilUnavailable =
+    ilData !== null && typeof (ilData as any)?.__unavailable === "string" ? ((ilData as any).__unavailable as string) : undefined;
   const shapedFmr = fmrData !== undefined ? shapeFmr(fmrData) : undefined;
-  const shapedIl = ilData !== undefined ? shapeIncomeLimits(ilData, size) : undefined;
+  const shapedIl = ilData !== undefined && ilUnavailable === undefined ? shapeIncomeLimits(ilData, size) : undefined;
   const area = shapedFmr?.area || shapedIl?.area || "this area";
 
   let rent_check: any;
@@ -509,6 +515,20 @@ function shapeAffordability(input: {
       area_median_income: Number.isFinite(ami) ? ami : undefined,
       categories,
       verdict,
+    };
+  }
+
+  // The income table refused the year the FMR table accepted. Say so in the
+  // income half's own slot rather than dropping it: a caller reading
+  // income_check gets the refusal and the call that answers, and no band is
+  // reported, so nothing here can overstate qualification.
+  if (ilUnavailable !== undefined && income !== undefined && size !== undefined) {
+    income_check = {
+      income,
+      household_size: size,
+      answered: false,
+      unavailable: ilUnavailable,
+      verdict: `No income verdict — ${ilUnavailable}`,
     };
   }
 
@@ -799,12 +819,16 @@ export function createServer() {
                 // name no year at all. HUD's own words are the honest answer
                 // on that branch.
                 if (err instanceof HttpError && err.status === 400 && params.year && /invalid year/i.test(err.message)) {
-                  const rentHalf = hasRent
-                    ? ` To answer the rent half at that year on its own, call fmr_lookup with year ${params.year}.`
-                    : "";
-                  throw new Error(
-                    `HUD's income-limit tables publish on a later cycle than the FMR tables, and the income table has no data for ${params.year} (HUD answered "Invalid year"). Re-run affordability_check with no year: each table then answers from its own latest, and table_years reports both.${rentHalf}`,
-                  );
+                  const explain =
+                    `HUD's income-limit tables publish on a later cycle than the FMR tables, and the income table has no data for ${params.year} (HUD answered "Invalid year"). Re-run affordability_check with no year: each table then answers from its own latest, and table_years reports both.`;
+                  // The rent half already answered 200 for this same year, and
+                  // failing the whole call threw that verdict away. Carry the
+                  // refusal in place of the half that did not answer instead.
+                  // It reports no band, so it cannot overstate qualification
+                  // (SPEC qualification-never-overstates). With no rent half
+                  // there is nothing to keep and the refusal stays an error.
+                  if (hasRent) return { __unavailable: explain };
+                  throw new Error(explain);
                 }
                 throw err;
               })

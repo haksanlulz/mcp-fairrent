@@ -862,10 +862,12 @@ describe("affordability_check across two table years", () => {
     expect(body.table_years).toEqual({ fmr: "2026", income: "2026", mismatch: false });
   });
 
-  it("explains an income-table year refusal instead of relaying HUD's 400", async () => {
+  it("keeps the rent verdict when the income table refuses the year", async () => {
     // The caller saw 2027 on the rent side and asked for it on both. HUD's raw
     // answer names /il/data and a status code; it does not say the income
-    // tables lag, and it kills the rent half that would have worked.
+    // tables lag. Rewriting the message was half the fix -- the Promise.all
+    // still rejected, so the rent verdict HUD had answered 200 for was thrown
+    // away with it. Keep the half that answered.
     vi.stubEnv("HUD_API_TOKEN", "test-token");
     vi.stubGlobal("fetch", routedWithStatus([
       ["/fmr/data/", FMR_2027, 200],
@@ -876,11 +878,33 @@ describe("affordability_check across two table years", () => {
       name: "affordability_check",
       arguments: { entityid: "3600599999", rent: 2600, bedrooms: 2, income: 48000, household_size: 3, year: "2027" },
     });
+    expect(res.isError).toBeFalsy();
+    const body = bodyOf(res);
+    expect(body.rent_check.verdict).toMatch(/2027 Fair Market Rent/);
+    expect(body.table_years.fmr).toBe("2027");
+    // The income half is present and says it did not answer. No band is
+    // reported, so nothing here can overstate qualification.
+    expect(body.income_check.answered).toBe(false);
+    expect(body.income_check.categories).toBeUndefined();
+    expect(String(body.income_check.verdict)).toMatch(/income-limit tables publish on a later cycle/);
+    expect(String(body.income_check.verdict)).toMatch(/Re-run affordability_check with no year/);
+    expect(body.table_years.income).toBeUndefined();
+    expect(body.table_years.mismatch).toBeUndefined();
+  });
+
+  it("still fails outright when the refused year is the only half asked for", async () => {
+    // Income-only: there is no answered half to keep, so the refusal is the
+    // whole answer and belongs in the error rather than in a payload with
+    // nothing in it.
+    vi.stubEnv("HUD_API_TOKEN", "test-token");
+    vi.stubGlobal("fetch", routedWithStatus([["/il/data/", { error: "Invalid year" }, 400]]));
+    const client = await connect();
+    const res: any = await client.callTool({
+      name: "affordability_check",
+      arguments: { entityid: "3600599999", income: 48000, household_size: 3, year: "2027" },
+    });
     expect(res.isError).toBe(true);
-    const msg = String(res.content[0].text);
-    expect(msg).toMatch(/income-limit tables publish on a later cycle/);
-    expect(msg).toMatch(/Re-run affordability_check with no year/);
-    expect(msg).toMatch(/fmr_lookup with year 2027/);
+    expect(String(res.content[0].text)).toMatch(/income-limit tables publish on a later cycle/);
   });
 
   it("does not rewrite an 'Invalid year' that arrives when no year was asked for", async () => {
