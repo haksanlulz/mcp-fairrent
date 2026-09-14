@@ -60,10 +60,11 @@ Every tool needs a free HUD USER API token. One-screen signup at [huduser.gov](h
 | `HUD_API_TOKEN` | — | Required by every tool. Free HUD USER token. |
 | `HUD_CONTACT` | this repo's URL | Contact string in the User-Agent sent to HUD. |
 | `HUD_HTTP_ATTEMPTS` | `3` | Attempts per HUD request, 1-10. Only 429, 5xx and transport errors are retried. |
+| `HUD_RETRY_BACKOFF_MS` | `500,2000` | Wait before each retry, comma-separated. Past the end of the list the last value repeats. |
 | `HUD_CACHE_TTL_MS` | `86400000` (24h) | Response-cache lifetime. `0` turns the cache off. |
 | `HUD_CACHE_MAX` | `300` | Most responses kept before the oldest is dropped. |
 
-The numeric knobs take a whole number. A value that is not one, or that falls outside the stated range, is ignored: the default applies and one line goes to stderr saying so.
+The numeric knobs take a whole number; `HUD_RETRY_BACKOFF_MS` takes a comma-separated list of them. A value that is not one, or that falls outside the stated range, is ignored: the default applies and one line goes to stderr saying so. One bad entry rejects the whole backoff list rather than half of it.
 
 ## The flow
 

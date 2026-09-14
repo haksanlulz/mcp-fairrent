@@ -13,7 +13,17 @@ async function connect(): Promise<Client> {
 
 // The response cache lives for the process; without this a value cached by one
 // test is served to the next and the suite becomes order-dependent.
-beforeEach(() => clearHudCache());
+//
+// The backoff ladder is flattened for the same reason the fetch is mocked:
+// nothing here is waiting on HUD. At the shipped 500/2000ms ladder the four
+// tests that exercise a retry slept through 17.6s of the suite's 18.1s. What
+// those tests assert -- how many attempts, and which statuses are retryable --
+// is untouched by the wall clock, and the ladder itself is asserted separately
+// under "environment knobs".
+beforeEach(() => {
+  clearHudCache();
+  vi.stubEnv("HUD_RETRY_BACKOFF_MS", "0,0");
+});
 
 function mockFetch(payload: unknown, status = 200) {
   return vi.fn(async () =>
@@ -1104,9 +1114,22 @@ describe("environment knobs", () => {
 
   it("falls back to the documented default for a value that is not a whole number", () => {
     vi.stubEnv("HUD_HTTP_ATTEMPTS", "oops");
+    vi.stubEnv("HUD_RETRY_BACKOFF_MS", "oops");
     vi.stubEnv("HUD_CACHE_TTL_MS", "oops");
     vi.stubEnv("HUD_CACHE_MAX", "oops");
-    expect(hudConfig()).toEqual({ attempts: 3, cacheTtlMs: 24 * 60 * 60 * 1000, cacheMax: 300 });
+    expect(hudConfig()).toEqual({
+      attempts: 3,
+      retryBackoffMs: [500, 2000],
+      cacheTtlMs: 24 * 60 * 60 * 1000,
+      cacheMax: 300,
+    });
+  });
+
+  it("rejects a backoff ladder with one bad rung, rather than half-parsing it", () => {
+    vi.stubEnv("HUD_RETRY_BACKOFF_MS", "100,nope,400");
+    expect(hudConfig().retryBackoffMs).toEqual([500, 2000]);
+    vi.stubEnv("HUD_RETRY_BACKOFF_MS", "100, 400 ,900");
+    expect(hudConfig().retryBackoffMs).toEqual([100, 400, 900]);
   });
 
   it("rejects out-of-range values that would disable the knob", () => {
@@ -1121,9 +1144,26 @@ describe("environment knobs", () => {
 
   it("keeps a valid value", () => {
     vi.stubEnv("HUD_HTTP_ATTEMPTS", "2");
+    vi.stubEnv("HUD_RETRY_BACKOFF_MS", "250,750");
     vi.stubEnv("HUD_CACHE_TTL_MS", "60000");
     vi.stubEnv("HUD_CACHE_MAX", "5");
-    expect(hudConfig()).toEqual({ attempts: 2, cacheTtlMs: 60000, cacheMax: 5 });
+    expect(hudConfig()).toEqual({ attempts: 2, retryBackoffMs: [250, 750], cacheTtlMs: 60000, cacheMax: 5 });
+  });
+
+  it("waits the configured backoff between attempts", async () => {
+    // The suite runs on a flattened ladder, so this is the one place that pins
+    // the ladder to the clock: two retries at 60ms each cannot finish in 60ms.
+    vi.stubEnv("HUD_API_TOKEN", "test-token");
+    vi.stubEnv("HUD_RETRY_BACKOFF_MS", "60,60");
+    const busy = mockFetch({ error: "rate limited" }, 429);
+    vi.stubGlobal("fetch", busy);
+    const client = await connect();
+    const started = Date.now();
+    const res: any = await client.callTool({ name: "fmr_lookup", arguments: { entityid: "3600599999" } });
+    const elapsed = Date.now() - started;
+    expect(res.isError).toBe(true);
+    expect(busy).toHaveBeenCalledTimes(3);
+    expect(elapsed).toBeGreaterThanOrEqual(110); // 2 x 60ms, less timer slop
   });
 
   it("a nonsense HUD_HTTP_ATTEMPTS still makes the request and reports the real error", async () => {

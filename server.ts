@@ -119,13 +119,37 @@ function envInt(name: string, fallback: number, opts: { min?: number; max?: numb
   return n;
 }
 
+/**
+ * Comma-separated integers, through the same validation. One bad element
+ * rejects the whole list: half a backoff ladder is worse than the documented
+ * one, and a partially-parsed ladder is the kind of thing nobody notices.
+ */
+function envIntList(name: string, fallback: number[], opts: { min?: number; max?: number } = {}): number[] {
+  const raw = process.env[name];
+  if (raw === undefined || raw.trim() === "") return fallback;
+  const { min = 0, max = Number.MAX_SAFE_INTEGER } = opts;
+  const parts = raw.split(",").map((p) => p.trim()).filter((p) => p !== "");
+  const out: number[] = [];
+  for (const part of parts) {
+    const n = Number(part);
+    if (!Number.isInteger(n) || n < min || n > max) {
+      knobWarn(name, raw, fallback.join(","), `"${part}" is not a whole number in ${min}..${max}`);
+      return fallback;
+    }
+    out.push(n);
+  }
+  return out.length ? out : fallback;
+}
+
 const HTTP_ATTEMPTS_DEFAULT = 3;
+const RETRY_BACKOFF_MS_DEFAULT = [500, 2000];
 const CACHE_TTL_MS_DEFAULT = 24 * 60 * 60 * 1000;
 const CACHE_MAX_DEFAULT = 300;
 
 // Read per call, not once at import: a knob resolved at module load cannot be
 // tested, and the cost is a string parse on a code path that makes HTTP calls.
 const httpAttempts = () => envInt("HUD_HTTP_ATTEMPTS", HTTP_ATTEMPTS_DEFAULT, { min: 1, max: 10 });
+const retryBackoffMs = () => envIntList("HUD_RETRY_BACKOFF_MS", RETRY_BACKOFF_MS_DEFAULT, { min: 0, max: 60_000 });
 const cacheTtlMs = () => envInt("HUD_CACHE_TTL_MS", CACHE_TTL_MS_DEFAULT, { min: 0 });
 const cacheMax = () => envInt("HUD_CACHE_MAX", CACHE_MAX_DEFAULT, { min: 1 });
 
@@ -133,12 +157,12 @@ const cacheMax = () => envInt("HUD_CACHE_MAX", CACHE_MAX_DEFAULT, { min: 1 });
 export function hudConfig() {
   return {
     attempts: httpAttempts(),
+    retryBackoffMs: retryBackoffMs(),
     cacheTtlMs: cacheTtlMs(),
     cacheMax: cacheMax(),
   };
 }
 
-const RETRY_BACKOFF_MS = [500, 2000];
 const RETRY_DEADLINE_MS = 40_000;
 const HTTP_TIMEOUT_MS = 15_000;
 
@@ -151,6 +175,7 @@ function isRetryable(e: unknown): boolean {
 async function withRetry<T>(fn: () => Promise<T>): Promise<T> {
   const started = Date.now();
   const attempts = httpAttempts(); // >= 1, so the loop body always runs once
+  const backoffs = retryBackoffMs(); // never empty: a bad list falls back whole
   let last: unknown;
   for (let attempt = 0; attempt < attempts; attempt++) {
     try {
@@ -158,7 +183,8 @@ async function withRetry<T>(fn: () => Promise<T>): Promise<T> {
     } catch (e) {
       last = e;
       if (attempt === attempts - 1 || !isRetryable(e)) break;
-      const backoff = RETRY_BACKOFF_MS[attempt] ?? 2000;
+      // Past the end of the ladder, hold at its last rung.
+      const backoff = backoffs[attempt] ?? backoffs[backoffs.length - 1] ?? 2000;
       if (Date.now() - started + backoff + HTTP_TIMEOUT_MS > RETRY_DEADLINE_MS) break;
       await new Promise((r) => setTimeout(r, backoff));
     }
