@@ -51,7 +51,19 @@ npm run build     # emits dist/; the published bin is dist/index.js
 
 Every tool needs a free HUD USER API token. One-screen signup at [huduser.gov](https://www.huduser.gov/portal/dataset/fmr-api.html) → set `HUD_API_TOKEN`. The tools tell you so if it's missing.
 
-`HUD_CONTACT` (optional) sets the contact string in the User-Agent sent to HUD; defaults to this repo's URL. Nothing loads a `.env` file — set both in the shell or the MCP client's `env` block (`.env.example` lists them).
+`HUD_CONTACT` (optional) sets the contact string in the User-Agent sent to HUD; defaults to this repo's URL. Nothing loads a `.env` file — set these in the shell or the MCP client's `env` block (`.env.example` lists them all).
+
+## Environment
+
+| Variable | Default | What it does |
+|---|---|---|
+| `HUD_API_TOKEN` | — | Required by every tool. Free HUD USER token. |
+| `HUD_CONTACT` | this repo's URL | Contact string in the User-Agent sent to HUD. |
+| `HUD_HTTP_ATTEMPTS` | `3` | Attempts per HUD request, 1-10. Only 429, 5xx and transport errors are retried. |
+| `HUD_CACHE_TTL_MS` | `86400000` (24h) | Response-cache lifetime. `0` turns the cache off. |
+| `HUD_CACHE_MAX` | `300` | Most responses kept before the oldest is dropped. |
+
+The numeric knobs take a whole number. A value that is not one, or that falls outside the stated range, is ignored: the default applies and one line goes to stderr saying so.
 
 ## The flow
 

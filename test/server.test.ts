@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import { createServer, REQUEST_GAP_MS, clearHudCache } from "../server";
+import { createServer, REQUEST_GAP_MS, clearHudCache, hudConfig } from "../server";
 
 async function connect(): Promise<Client> {
   const server = createServer();
@@ -1061,6 +1061,84 @@ describe("transient-failure retry", () => {
     const res: any = await client.callTool({ name: "fmr_lookup", arguments: { entityid: "3600599999" } });
     expect(res.isError).toBe(true);
     expect(busy).toHaveBeenCalledTimes(3);
+  });
+});
+
+describe("environment knobs", () => {
+  // Every one of these was verified against the running server before the
+  // validation went in: a typo in any of the three disabled the thing it
+  // configures, and only HUD_HTTP_ATTEMPTS was loud about it -- with the wrong
+  // message ("Error: undefined").
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
+  });
+
+  it("falls back to the documented default for a value that is not a whole number", () => {
+    vi.stubEnv("HUD_HTTP_ATTEMPTS", "oops");
+    vi.stubEnv("HUD_CACHE_TTL_MS", "oops");
+    vi.stubEnv("HUD_CACHE_MAX", "oops");
+    expect(hudConfig()).toEqual({ attempts: 3, cacheTtlMs: 24 * 60 * 60 * 1000, cacheMax: 300 });
+  });
+
+  it("rejects out-of-range values that would disable the knob", () => {
+    vi.stubEnv("HUD_HTTP_ATTEMPTS", "0"); // a zero-attempt loop never runs
+    vi.stubEnv("HUD_CACHE_MAX", "0"); // a zero bound evicts nothing
+    expect(hudConfig().attempts).toBe(3);
+    expect(hudConfig().cacheMax).toBe(300);
+    // 0 is meaningful for the TTL: it is how the cache is switched off.
+    vi.stubEnv("HUD_CACHE_TTL_MS", "0");
+    expect(hudConfig().cacheTtlMs).toBe(0);
+  });
+
+  it("keeps a valid value", () => {
+    vi.stubEnv("HUD_HTTP_ATTEMPTS", "2");
+    vi.stubEnv("HUD_CACHE_TTL_MS", "60000");
+    vi.stubEnv("HUD_CACHE_MAX", "5");
+    expect(hudConfig()).toEqual({ attempts: 2, cacheTtlMs: 60000, cacheMax: 5 });
+  });
+
+  it("a nonsense HUD_HTTP_ATTEMPTS still makes the request and reports the real error", async () => {
+    // Before: Number("oops") = NaN, the for-loop never executed, and the server
+    // threw an unassigned `last` -- the tool answered "Error: undefined", which
+    // names neither HUD nor the network.
+    vi.stubEnv("HUD_API_TOKEN", "test-token");
+    vi.stubEnv("HUD_HTTP_ATTEMPTS", "oops");
+    const bad = mockFetch({ error: "upstream" }, 503);
+    vi.stubGlobal("fetch", bad);
+    const client = await connect();
+    const res: any = await client.callTool({ name: "fmr_lookup", arguments: { entityid: "3600599999" } });
+    expect(res.isError).toBe(true);
+    expect(res.content[0].text).toContain("HUD /fmr/data/3600599999");
+    expect(res.content[0].text).not.toContain("undefined");
+    expect(bad).toHaveBeenCalledTimes(3); // the documented default, not zero
+  });
+
+  it("honours a valid cache TTL, so the knob is wired and not just parsed", async () => {
+    vi.stubEnv("HUD_API_TOKEN", "test-token");
+    vi.stubEnv("HUD_CACHE_TTL_MS", "1");
+    const f = mockFetch({ data: { basicdata: { Efficiency: 1 } } });
+    vi.stubGlobal("fetch", f);
+    const client = await connect();
+    await client.callTool({ name: "fmr_lookup", arguments: { entityid: "3600599999" } });
+    await new Promise((r) => setTimeout(r, 20)); // past a 1ms TTL by 20x
+    await client.callTool({ name: "fmr_lookup", arguments: { entityid: "3600599999" } });
+    expect(f).toHaveBeenCalledTimes(2);
+  });
+
+  it("honours a valid cache bound, evicting the oldest entry", async () => {
+    vi.stubEnv("HUD_API_TOKEN", "test-token");
+    vi.stubEnv("HUD_CACHE_MAX", "2");
+    const f = mockFetch({ data: { basicdata: { Efficiency: 1 } } });
+    vi.stubGlobal("fetch", f);
+    const client = await connect();
+    for (const year of ["2025", "2026", "2027"]) {
+      await client.callTool({ name: "fmr_lookup", arguments: { entityid: "3600599999", year } });
+    }
+    expect(f).toHaveBeenCalledTimes(3);
+    // 2025 was pushed out by 2027, so it has to be fetched again.
+    await client.callTool({ name: "fmr_lookup", arguments: { entityid: "3600599999", year: "2025" } });
+    expect(f).toHaveBeenCalledTimes(4);
   });
 });
 

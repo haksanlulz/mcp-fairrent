@@ -82,7 +82,62 @@ class HttpError extends Error {
 // body, usually a rejected token. It answers the same however many times asked.
 class PermanentError extends Error {}
 
-const HTTP_ATTEMPTS = Number(process.env.HUD_HTTP_ATTEMPTS ?? 3);
+/**
+ * Integer knobs, read from the environment through one validated path.
+ *
+ * A bare Number() turns a typo into NaN and NaN disables whatever it
+ * configures, silently and in the unsafe direction. Verified by running the
+ * real server: HUD_HTTP_ATTEMPTS=oops (or 0) makes withRetry's loop body
+ * unreachable, so it throws an unassigned `last` and every tool answers
+ * "Error: undefined"; HUD_CACHE_TTL_MS=oops leaves the cache switched on and
+ * never expiring; HUD_CACHE_MAX=oops turns off eviction entirely.
+ *
+ * Unparseable or out-of-range falls back to the documented default and says so
+ * on stderr — stdout is the JSON-RPC channel and must carry nothing else.
+ */
+const knobWarned = new Set<string>();
+function knobWarn(name: string, raw: string, used: string | number, why: string): void {
+  const seen = `${name}=${raw}`;
+  if (knobWarned.has(seen)) return;
+  knobWarned.add(seen);
+  console.error(`mcp-fairrent: ignoring ${name}=${JSON.stringify(raw)} (${why}); using ${used}`);
+}
+
+function envInt(name: string, fallback: number, opts: { min?: number; max?: number } = {}): number {
+  const raw = process.env[name];
+  if (raw === undefined || raw.trim() === "") return fallback;
+  const { min = 0, max = Number.MAX_SAFE_INTEGER } = opts;
+  const n = Number(raw.trim());
+  if (!Number.isInteger(n)) {
+    knobWarn(name, raw, fallback, "not a whole number");
+    return fallback;
+  }
+  if (n < min || n > max) {
+    knobWarn(name, raw, fallback, `outside ${min}..${max}`);
+    return fallback;
+  }
+  return n;
+}
+
+const HTTP_ATTEMPTS_DEFAULT = 3;
+const CACHE_TTL_MS_DEFAULT = 24 * 60 * 60 * 1000;
+const CACHE_MAX_DEFAULT = 300;
+
+// Read per call, not once at import: a knob resolved at module load cannot be
+// tested, and the cost is a string parse on a code path that makes HTTP calls.
+const httpAttempts = () => envInt("HUD_HTTP_ATTEMPTS", HTTP_ATTEMPTS_DEFAULT, { min: 1, max: 10 });
+const cacheTtlMs = () => envInt("HUD_CACHE_TTL_MS", CACHE_TTL_MS_DEFAULT, { min: 0 });
+const cacheMax = () => envInt("HUD_CACHE_MAX", CACHE_MAX_DEFAULT, { min: 1 });
+
+/** Exported for tests: the knobs as they resolve right now, defaults included. */
+export function hudConfig() {
+  return {
+    attempts: httpAttempts(),
+    cacheTtlMs: cacheTtlMs(),
+    cacheMax: cacheMax(),
+  };
+}
+
 const RETRY_BACKOFF_MS = [500, 2000];
 const RETRY_DEADLINE_MS = 40_000;
 const HTTP_TIMEOUT_MS = 15_000;
@@ -95,13 +150,14 @@ function isRetryable(e: unknown): boolean {
 
 async function withRetry<T>(fn: () => Promise<T>): Promise<T> {
   const started = Date.now();
+  const attempts = httpAttempts(); // >= 1, so the loop body always runs once
   let last: unknown;
-  for (let attempt = 0; attempt < HTTP_ATTEMPTS; attempt++) {
+  for (let attempt = 0; attempt < attempts; attempt++) {
     try {
       return await throttled(fn);
     } catch (e) {
       last = e;
-      if (attempt === HTTP_ATTEMPTS - 1 || !isRetryable(e)) break;
+      if (attempt === attempts - 1 || !isRetryable(e)) break;
       const backoff = RETRY_BACKOFF_MS[attempt] ?? 2000;
       if (Date.now() - started + backoff + HTTP_TIMEOUT_MS > RETRY_DEADLINE_MS) break;
       await new Promise((r) => setTimeout(r, backoff));
@@ -127,15 +183,14 @@ function token(): string {
 //
 // In memory, LRU-bounded, successful reads only: caching an error would pin a
 // transient failure for the life of the process. HUD_CACHE_TTL_MS=0 disables it.
-const CACHE_TTL_MS = Number(process.env.HUD_CACHE_TTL_MS ?? 24 * 60 * 60 * 1000);
-const CACHE_MAX = Number(process.env.HUD_CACHE_MAX ?? 300);
 const cache = new Map<string, { at: number; value: any }>();
 
 function cacheGet(key: string): any | undefined {
-  if (CACHE_TTL_MS <= 0) return undefined;
+  const ttl = cacheTtlMs();
+  if (ttl <= 0) return undefined;
   const hit = cache.get(key);
   if (!hit) return undefined;
-  if (Date.now() - hit.at > CACHE_TTL_MS) {
+  if (Date.now() - hit.at > ttl) {
     cache.delete(key);
     return undefined;
   }
@@ -145,9 +200,10 @@ function cacheGet(key: string): any | undefined {
 }
 
 function cacheSet(key: string, value: any): void {
-  if (CACHE_TTL_MS <= 0) return;
+  if (cacheTtlMs() <= 0) return;
   cache.set(key, { at: Date.now(), value });
-  while (cache.size > CACHE_MAX) {
+  const max = cacheMax();
+  while (cache.size > max) {
     const oldest = cache.keys().next();
     if (oldest.done) break;
     cache.delete(oldest.value);
