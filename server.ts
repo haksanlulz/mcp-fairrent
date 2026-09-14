@@ -771,13 +771,17 @@ export function createServer() {
           hasRent ? hudGet(`/fmr/data/${encodeURIComponent(id)}`, params) : Promise.resolve(undefined),
           hasIncome
             ? hudGet(`/il/data/${encodeURIComponent(id)}`, params).catch((err) => {
-                if (err instanceof HttpError && err.status === 400 && /invalid year/i.test(err.message)) {
-                  const asked = params.year ? ` for ${params.year}` : "";
+                // Only when a year was actually asked for. Without one there is
+                // nothing to re-run differently: "re-run with no year" is what
+                // the caller already did, and the fmr_lookup sentence would
+                // name no year at all. HUD's own words are the honest answer
+                // on that branch.
+                if (err instanceof HttpError && err.status === 400 && params.year && /invalid year/i.test(err.message)) {
                   const rentHalf = hasRent
-                    ? ` To answer the rent half at that year on its own, call fmr_lookup with year${asked ? ` ${params.year}` : ""}.`
+                    ? ` To answer the rent half at that year on its own, call fmr_lookup with year ${params.year}.`
                     : "";
                   throw new Error(
-                    `HUD's income-limit tables publish on a later cycle than the FMR tables, and the income table has no data${asked} (HUD answered "Invalid year"). Re-run affordability_check with no year: each table then answers from its own latest, and table_years reports both.${rentHalf}`,
+                    `HUD's income-limit tables publish on a later cycle than the FMR tables, and the income table has no data for ${params.year} (HUD answered "Invalid year"). Re-run affordability_check with no year: each table then answers from its own latest, and table_years reports both.${rentHalf}`,
                   );
                 }
                 throw err;

@@ -843,6 +843,28 @@ describe("affordability_check across two table years", () => {
     expect(msg).toMatch(/fmr_lookup with year 2027/);
   });
 
+  it("does not rewrite an 'Invalid year' that arrives when no year was asked for", async () => {
+    // The branch the ternary in the handler already anticipated. Rewriting it
+    // there told the caller to "Re-run affordability_check with no year" --
+    // which is exactly what they did -- and, with a rent half, offered
+    // "call fmr_lookup with year." naming no year and no action.
+    vi.stubEnv("HUD_API_TOKEN", "test-token");
+    vi.stubGlobal("fetch", routedWithStatus([
+      ["/fmr/data/", FMR_2027, 200],
+      ["/il/data/", { error: "Invalid year" }, 400],
+    ]));
+    const client = await connect();
+    const res: any = await client.callTool({
+      name: "affordability_check",
+      arguments: { entityid: "3600599999", income: 48000, household_size: 3 },
+    });
+    expect(res.isError).toBe(true);
+    const msg = String(res.content[0].text);
+    expect(msg).toMatch(/Invalid year/);
+    expect(msg).not.toMatch(/later cycle/);
+    expect(msg).not.toMatch(/Re-run affordability_check with no year/);
+  });
+
   it("still surfaces an ordinary IL 400 unchanged", async () => {
     // A bad entityid also 400s. That one is the caller's mistake and must not
     // be relabelled as a publication-cycle problem.
