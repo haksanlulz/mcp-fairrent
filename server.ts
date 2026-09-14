@@ -682,8 +682,13 @@ export function createServer() {
         const params: Record<string, string> = {};
         if (args.year) params.year = String(args.year);
         const data = await hudGet(`/fmr/statedata/${state}`, params);
+        // statedata returns two row shapes. A COUNTY row carries county_name +
+        // fips_code; a METRO row carries metro_name + code and none of
+        // county_name / name / town_name, so metro_name has to be in the chain
+        // or every metro in the state comes back name:undefined (live
+        // /fmr/statedata/NY, 2026-09-14: 14 of 14 metro rows).
         const shapeRow = (r: any) => ({
-          name: r.county_name || r.name || r.town_name,
+          name: r.county_name || r.metro_name || r.name || r.town_name,
           code: r.fips_code || r.code,
           metro_name: r.metro_name || undefined,
           efficiency: r.Efficiency,
@@ -691,7 +696,11 @@ export function createServer() {
           two_br: r["Two-Bedroom"],
           three_br: r["Three-Bedroom"],
           four_br: r["Four-Bedroom"],
-          small_area_fmrs: r.smallarea_status === "1" || r.smallarea_status === 1,
+          // 40 or 50: a 50th-percentile area's FMRs are set at the 50th
+          // percentile of area rents rather than the 40th, which is a program
+          // distinction and not a rounding note.
+          fmr_percentile: r["FMR Percentile"],
+          small_area_fmrs: isFlagSet(r.smallarea_status),
         });
         return asJson(
           withScope({

@@ -688,27 +688,37 @@ const MTSP_PAYLOAD = {
   },
 };
 
+// Re-derived from a live capture of /fmr/statedata/NY, 2026-09-14. The previous
+// fixture was inverted against the API on both row types: its metro row carried
+// `name` and no metro_name (HUD serves the exact opposite, which is why every
+// metro row came back with name:undefined), and neither row carried HUD's
+// "FMR Percentile". Rents arrive as numbers here, not strings.
 const STATEDATA_PAYLOAD = {
   data: {
-    year: "2026",
+    year: "2027",
     metroareas: [
-      { code: "METRO35620M35620", name: "New York-White Plains", state_code: "NY", Efficiency: "1875", "One-Bedroom": "1945", "Two-Bedroom": "2213", "Three-Bedroom": "2818", "Four-Bedroom": "3015", smallarea_status: "1" },
+      { metro_name: "Buffalo-Cheektowaga, NY MSA", code: "METRO15380M15380", Efficiency: 1178, "One-Bedroom": 1203, "Two-Bedroom": 1423, "Three-Bedroom": 1732, "Four-Bedroom": 1977, "FMR Percentile": 40, statename: "New York", statecode: "NY", smallarea_status: "1" },
     ],
     counties: [
-      { county_name: "Albany County", fips_code: "3600199999", metro_name: "Albany-Schenectady-Troy", Efficiency: "900", "One-Bedroom": "1000", "Two-Bedroom": "1200", "Three-Bedroom": "1500", "Four-Bedroom": "1700", smallarea_status: "0" },
+      { town_name: null, county_name: "Albany County", metro_name: "Albany-Schenectady-Troy, NY MSA", fips_code: "3600199999", Efficiency: 1238, "One-Bedroom": 1425, "Two-Bedroom": 1711, "Three-Bedroom": 2039, "Four-Bedroom": 2249, "FMR Percentile": 40, statename: "New York", statecode: "NY", smallarea_status: "0" },
     ],
   },
 };
 
+// Re-derived from a live capture of /usps?type=7&query=36005, 2026-09-14. The
+// county->ZIP rows key the ZIP as `geoid` and carry the source county as
+// `county`; there is no `zip` field at all, so the `r.zip ?? r.geoid` fallback
+// in server.ts is the branch that always runs against real HUD -- and the old
+// fixture, which carried `zip`, was the only branch any test exercised.
 const REVERSE_CROSSWALK_PAYLOAD = {
   data: {
     year: "2026",
-    quarter: "1",
+    quarter: "2",
     input: "36005",
     crosswalk_type: "county-zip",
     results: [
-      { zip: "10451", city: "BRONX", state: "NY", res_ratio: "0.05", bus_ratio: "0.04", oth_ratio: "0.05", tot_ratio: "0.05" },
-      { zip: "10452", city: "BRONX", state: "NY", res_ratio: "0.07", bus_ratio: "0.03", oth_ratio: "0.06", tot_ratio: "0.06" },
+      { county: "36005", geoid: "10451", city: "BRONX", state: "NY", res_ratio: 0.044245220742676915, bus_ratio: 0.04981041020337815, oth_ratio: 0.030411632193323778, tot_ratio: 0.04348672911096552 },
+      { county: "36005", geoid: "10452", city: "BRONX", state: "NY", res_ratio: 0.05569243387054831, bus_ratio: 0.045777318166149605, oth_ratio: 0.037907024370264185, tot_ratio: 0.053986578607220635 },
     ],
   },
 };
@@ -750,8 +760,32 @@ describe("state_fmr_overview", () => {
     expect(String(fetchMock.mock.calls[0][0])).toContain("/fmr/statedata/NY");
     expect(body.metro_areas[0].small_area_fmrs).toBe(true);
     expect(body.counties[0].name).toBe("Albany County");
-    expect(body.counties[0].two_br).toBe("1200");
+    expect(body.counties[0].two_br).toBe(1711);
     expect(body.eligibility_scope).toBeDefined();
+  });
+
+  it("names the metro rows too, from HUD's metro_name", async () => {
+    // A metro row carries metro_name and none of county_name / name / town_name,
+    // so a shaper without metro_name in the chain returns name:undefined for
+    // every metro in the state -- half the result of a tool whose whole job is
+    // metros AND counties.
+    vi.stubEnv("HUD_API_TOKEN", "test-token");
+    vi.stubGlobal("fetch", mockFetch(STATEDATA_PAYLOAD));
+    const client = await connect();
+    const body = bodyOf(await client.callTool({ name: "state_fmr_overview", arguments: { state: "ny" } }));
+    expect(body.metro_areas[0].name).toBe("Buffalo-Cheektowaga, NY MSA");
+    expect(body.metro_areas[0].code).toBe("METRO15380M15380");
+  });
+
+  it("carries HUD's FMR percentile on both row types", async () => {
+    // 40th vs 50th percentile is a real program distinction (a 50th-percentile
+    // area's FMRs are set higher on purpose), and the shaper dropped it.
+    vi.stubEnv("HUD_API_TOKEN", "test-token");
+    vi.stubGlobal("fetch", mockFetch(STATEDATA_PAYLOAD));
+    const client = await connect();
+    const body = bodyOf(await client.callTool({ name: "state_fmr_overview", arguments: { state: "ny" } }));
+    expect(body.metro_areas[0].fmr_percentile).toBe(40);
+    expect(body.counties[0].fmr_percentile).toBe(40);
   });
 });
 
@@ -768,6 +802,11 @@ describe("geo_to_zips", () => {
     expect(body.zip_count).toBe(2);
     expect(body.zips[0].city).toBe("BRONX");
     expect(String(body.note)).toContain("res_ratio");
+    // The ZIP comes from `geoid`: HUD's county->ZIP rows have no `zip` field.
+    // Delete the `?? r.geoid` fallback in server.ts and this goes red.
+    expect(body.zips[0].zip).toBe("10451");
+    expect(body.zips[1].zip).toBe("10452");
+    expect(body.zips[0].res_ratio).toBe(0.0442);
   });
 
   it("rejects an unknown source geography with the valid list", async () => {
