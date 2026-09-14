@@ -1284,6 +1284,31 @@ describe("environment knobs", () => {
     expect(elapsed).toBeGreaterThanOrEqual(2 * 400 - 20); // 2 x 400ms, less timer slop
   });
 
+  it("holds at the ladder's last rung past the end of the list", async () => {
+    // README and .env.example both say "past the end of the list the last value
+    // repeats". Dropping `?? backoffs[backoffs.length - 1]` from withRetry left
+    // all 71 tests green, so that sentence was unguarded: every other retry
+    // test runs a ladder at least as long as its own attempt count ("0,0" and
+    // "400,400" at 3 attempts, "30000" at 1), so none of them ever indexes past
+    // the end. Four attempts on a ONE-rung 300ms ladder cost ~900ms when the
+    // rung repeats and ~4300ms when the bare `?? 2000` fallback takes over --
+    // and the attempt COUNT is 4 either way, since both ladders clear the 40s
+    // deadline. Only the clock separates them.
+    vi.stubEnv("HUD_API_TOKEN", "test-token");
+    vi.stubEnv("HUD_HTTP_ATTEMPTS", "4");
+    vi.stubEnv("HUD_RETRY_BACKOFF_MS", "300");
+    const busy = mockFetch({ error: "rate limited" }, 429);
+    vi.stubGlobal("fetch", busy);
+    const client = await connect();
+    const started = Date.now();
+    const res: any = await client.callTool({ name: "fmr_lookup", arguments: { entityid: "3600599999" } });
+    const elapsed = Date.now() - started;
+    expect(res.isError).toBe(true);
+    expect(busy).toHaveBeenCalledTimes(4);
+    expect(elapsed).toBeGreaterThanOrEqual(3 * 300 - 20); // three repeats of the one rung
+    expect(elapsed).toBeLessThan(2000); // where a bare `?? 2000` lands instead
+  });
+
   it("gives up rather than sleep past the retry deadline", async () => {
     // withRetry's other exit: RETRY_DEADLINE_MS bounds total wall clock, because
     // an MCP client has its own call timeout and three stacked 15s HTTP timeouts
