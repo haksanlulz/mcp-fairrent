@@ -284,11 +284,15 @@ function ratio(v: unknown): number | undefined {
   return Number.isFinite(n) ? Math.round(n * 10000) / 10000 : undefined;
 }
 
-// HUD's boolean-ish flags arrive as strings, and NOT in one spelling: live on
-// 2026-09-14, /fmr/data/3600599999 served metro_status "1.0" while the same
-// response's smallarea_status (on a small-area metro) was "1". A string compare
-// against "1" therefore read false for every metro FMR area in the country.
-// Compare numerically so either spelling of the same one is the same answer.
+// HUD's boolean-ish flags arrive as strings, and NOT in one spelling. Live on
+// 2026-09-14, /fmr/data/3600599999 served metro_status "1.0" and carried no
+// smallarea_status at all (its keys: county_name, counties_msa, town_name,
+// metro_status, metro_name, area_name, basicdata), while
+// /fmr/data/METRO15380M15380 -- Buffalo-Cheektowaga, the one NY metro with
+// small-area FMRs -- served metro_status "1.0" beside smallarea_status "1".
+// A string compare against "1" therefore read false for every metro FMR area
+// in the country. Compare numerically: either spelling of the same one is the
+// same answer.
 function isFlagSet(v: unknown): boolean {
   return Number(v) === 1;
 }

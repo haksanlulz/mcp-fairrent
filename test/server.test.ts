@@ -57,7 +57,10 @@ const ENTITYID_TOOLS = ["fmr_lookup", "income_limits", "affordability_check", "m
 // /fmr/data/3600599999 on 2026-09-14. This fixture said "1" until then, a shape
 // the API does not produce, which is why 48 green tests could not see that
 // `metro_status === "1"` is false for every metro FMR area in the country.
-// The sibling flag smallarea_status really is served as "1", no decimal.
+// The sibling flag smallarea_status really is served as "1", no decimal -- but
+// not by this entity, which carries no smallarea_status at all. The "1" spelling
+// was captured from /fmr/data/METRO15380M15380 (Buffalo-Cheektowaga) the same
+// day, which serves metro_status "1.0" beside smallarea_status "1".
 const FMR_PAYLOAD = {
   data: {
     county_name: "Bronx County",
