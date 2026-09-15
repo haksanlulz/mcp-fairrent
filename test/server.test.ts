@@ -428,6 +428,38 @@ describe("mcp-fairrent server", () => {
     }
   });
 
+  it("scopes the state_fmr_overview redirect to Connecticut wherever a description names it", async () => {
+    // The town clause is regional; the redirect is not, and the descriptions
+    // claimed it for all six. Live 2026-09-14, against the FIRST row
+    // /fmr/listCounties/<state> returns: /fmr/data/2502300170 (MA) 200,
+    // 2302100100 (ME) 200, 5000100325 (VT) 200, 3301900260 (NH) 200,
+    // 4400105140 (RI) 200. CT alone 404s (0900952070 -> 404, its
+    // state_fmr_overview id 0917052070 -> 200). A model reading the old text
+    // for a Massachusetts lookup discards a working entity id it already holds
+    // and spends a second call -- and the text disagreed with the payload note
+    // sitting beside it, which gates the CT half on state === "CT".
+    //
+    // The rule is the scope, not the wording: any sentence that sends a caller
+    // to state_fmr_overview has to say where that applies.
+    const client = await connect();
+    const { tools } = await client.listTools();
+    const descs: Array<[string, string]> = [
+      ["list_counties", String(tools.find((t) => t.name === "list_counties")!.description ?? "")],
+      ...ENTITYID_TOOLS.map((name): [string, string] => [
+        `${name}.entityid`,
+        String((tools.find((t) => t.name === name)!.inputSchema.properties as any).entityid.description ?? ""),
+      ]),
+    ];
+    for (const [label, desc] of descs) {
+      expect(desc, label).not.toBe("");
+      for (const sentence of desc.split(/(?<=[.;])\s+/)) {
+        if (!/state_fmr_overview/.test(sentence)) continue;
+        expect(sentence, `${label} sends the caller to state_fmr_overview without naming Connecticut: ${sentence}`)
+          .toMatch(/Connecticut|\bCT\b/);
+      }
+    }
+  });
+
   it("the thrown entityid error says the same thing the schema does", async () => {
     // The schema half of this was fixed; the ERROR half still offered "state
     // code ... or ZIP" and no test covered it. A model that hits the validation

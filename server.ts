@@ -590,13 +590,18 @@ function withScope<T extends Record<string, unknown>>(result: T): T & { eligibil
 // that read the validation message and retried as told got a 400 from HUD.
 // One description for the four entityid properties, for the same reason as
 // ENTITYID_REQUIRED: an LLM fills arguments from the schema, so this text and
-// the thrown error have to say the same thing. The New England clause is not a
-// footnote -- live 2026-09-14, /fmr/data/0900952070 (New Haven town, the id
-// list_counties gives for CT) answers 404 while /fmr/data/0917052070 (the same
-// town's id in state_fmr_overview) answers 200, and /fmr/data/0917099999, the
-// FIPS + 99999 construction, is a 404 too.
+// the thrown error have to say the same thing. The town clause covers all six
+// New England states; the state_fmr_overview redirect is CONNECTICUT ONLY, and
+// the difference is measured, not inferred. Live 2026-09-14, against the first
+// row /fmr/listCounties/<state> returns for each: /fmr/data/2502300170 (MA)
+// 200, 2302100100 (ME) 200, 5000100325 (VT) 200, 3301900260 (NH) 200,
+// 4400105140 (RI) 200 -- and CT alone 404s (0900952070 -> 404, the same town's
+// state_fmr_overview id 0917052070 -> 200, and 0917099999, the FIPS + 99999
+// construction, a 404 too). Sending a Massachusetts caller to
+// state_fmr_overview makes it discard an id that works and spend a second call,
+// so the scope belongs in the text.
 const ENTITYID_DESC =
-  "10-digit county entity id (county FIPS + 99999) or metro CBSA code. Derive from a ZIP via zip_crosswalk then list_counties. In New England a HUD area is a town, not a county: take the town's code from state_fmr_overview, because the FMR table does not answer on the legacy county ids list_counties returns there";
+  "10-digit county entity id (county FIPS + 99999) or metro CBSA code. Derive from a ZIP via zip_crosswalk then list_counties. In New England a HUD area is a town, not a county, so list_counties returns one row per town; in Connecticut use state_fmr_overview instead and take the town's code, because CT replaced counties with planning regions and the FMR table 404s on the legacy county ids list_counties still returns there";
 
 // Derived, not restated. The two used to be hand-kept copies and drifted the
 // moment the New England clause landed on one of them: the description carried
@@ -716,7 +721,7 @@ export function createServer() {
       {
         name: "list_counties",
         description:
-          "List the counties in a state with their 10-digit FIPS entity ids, so you can look up FMR or income limits by county name. Pass a 2-letter state code. In the six New England states HUD areas are towns, so rows come back one per town with a town_name that is the only thing separating them - and there the FMR table answers on the ids in state_fmr_overview, not on these. Rows also carry an `area` label combining the two.",
+          "List the counties in a state with their 10-digit FIPS entity ids, so you can look up FMR or income limits by county name. Pass a 2-letter state code. In the six New England states HUD areas are towns, so rows come back one per town with a town_name that is the only thing separating them. In Connecticut those ids are the legacy county ones and the FMR table 404s on them - take the town's code from state_fmr_overview there instead; in the other five states these ids answer. Rows also carry an `area` label combining the two.",
         inputSchema: {
           type: "object",
           properties: {
