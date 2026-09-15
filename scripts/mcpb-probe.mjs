@@ -168,7 +168,7 @@ try {
   // Quote every arg. With shell:true the shell re-splits the command line, and
   // the install directory here is under the user profile -- measured on a
   // tmpdir containing a space, the unquoted form exits 1 with "Cannot find
-  // module 'C:\\Users\\abish\\AppData\\Local\\Temp\\probe'" and the quoted form
+  // module 'C:\\Users\\<user>\\AppData\\Local\\Temp\\probe'" and the quoted form
   // exits 0. That failure reads as a FAIL of the bundle and is a claim about
   // the probe. pack-probe.mjs quotes its bin shim for the same reason.
   child = spawn(cfg.command, args.map((a) => `"${a}"`), { cwd: dir, env, stdio: ["pipe", "pipe", "pipe"], shell: true });
