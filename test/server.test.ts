@@ -691,6 +691,17 @@ describe("mcp-fairrent server", () => {
       expect(fetchMock).not.toHaveBeenCalled(); // validation fires before any HUD call
     });
 
+    it("rejects an unknown argument with a near-miss, before any HUD call", async () => {
+      vi.stubEnv("HUD_API_TOKEN", "test-token");
+      const fetchMock = mockFetch({});
+      vi.stubGlobal("fetch", fetchMock);
+      const client = await connect();
+      const res: any = await client.callTool({ name: "fmr_lookup", arguments: { entityid: "3600599999", yeer: 2026 } });
+      expect(res.isError).toBe(true);
+      expect(res.content[0].text).toMatch(/fmr_lookup does not accept "yeer" \(did you mean "year"\?\)/);
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
     it("enforces the table bounds: bedrooms 0-4, household_size 1-8", async () => {
       vi.stubEnv("HUD_API_TOKEN", "test-token");
       const fetchMock = BOTH();
