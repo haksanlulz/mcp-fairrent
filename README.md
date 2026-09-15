@@ -149,14 +149,14 @@ Two tiers, already split by script. `npm test` is the offline tier: vitest, in-m
 Counts, measured 2026-09-14 after the last change of the day:
 
 ```bash
-find . -name '*.ts' -not -path './node_modules/*' -not -path './dist/*' -not -path './build/*' -not -path './test/*' -not -name smoke.ts | xargs wc -l   # app: 1028 lines (index.ts + server.ts; smoke.ts is another 70)
-find ./test -name '*.test.ts' | xargs wc -l                                                                                                                # tests: 1504 lines, 2 files
-npm test                                                                                                                                                   # 72 tests, 72 passed
+find . -name '*.ts' -not -path './node_modules/*' -not -path './dist/*' -not -path './build/*' -not -path './test/*' -not -name smoke.ts | xargs wc -l   # app: 1033 lines (index.ts + server.ts; smoke.ts is another 70)
+find ./test -name '*.test.ts' | xargs wc -l                                                                                                                # tests: 1594 lines, 2 files
+npm test                                                                                                                                                   # 75 tests, 75 passed
 ```
 
 `build/` is excluded because `npm run build:mcpb` stages a copy of the server there.
 
-Layers. `test/server.test.ts` drives every tool end to end through the SDK client: input validation (bounds, required pairs, non-positive numbers) rejected before any HUD request; response shaping against fixtures copied from HUD's documented samples; the transport layer (retry on 429 and 5xx, no retry on 404, response cache keyed on path plus params, failures not cached). `test/no-http-stack.test.ts` pins that the source imports only the stdio transport, never an HTTP one, and that `package.json` declares exactly one runtime dependency.
+Layers. `test/server.test.ts` drives every tool end to end through the SDK client: input validation (bounds, required pairs, non-positive numbers) rejected before any HUD request; response shaping against fixtures copied from HUD's documented samples; the transport layer (retry on 429 and 5xx, no retry on 404, response cache keyed on path plus params, failures not cached). `test/no-http-stack.test.ts` pins that the source imports only the stdio transport, never an HTTP one, that `package.json` declares exactly one runtime dependency, and that nothing in the source writes to stdout — that file descriptor belongs to JSON-RPC, so diagnostics go to stderr.
 
 Mutation probe, 2026-09-11: widened the `affordability_check` bedrooms bound in `server.ts` from `> 4` to `> 5`. One test went red: `affordability_check > enforces the table bounds: bedrooms 0-4, household_size 1-8`. 47 others stayed green. Source restored, `git diff --quiet -- server.ts` clean.
 
