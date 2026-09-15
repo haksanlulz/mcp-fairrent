@@ -28,7 +28,16 @@ import { fileURLToPath } from "node:url";
 // about the instrument, not the artifact (2026-07-30).
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const pkg = JSON.parse(readFileSync(join(repo, "package.json"), "utf8"));
-const fail = (m) => { console.error(`FAIL: ${m}`); process.exit(1); };
+// Teardown has to run on BOTH paths, and neither ran. process.exit() inside
+// fail() abandons the stack rather than unwinding it, so the `finally` at the
+// bottom was dead code on every FAIL; and on a PASS, child.kill() under
+// shell:true kills the shell, not the node grandchild, which still holds `dir`
+// as its cwd -- rmSync then throws EBUSY into a bare catch. Measured 2026-09-15
+// on a clean PASS: packprobe- directories in tmpdir 45 -> 46. Same pair
+// GAUNTLET §6 records for scripts/mcpb-probe.mjs; this is the copy the sweep
+// missed. `cleanup` is widened as the probe acquires things to clean up.
+let cleanup = () => {};
+const fail = (m) => { console.error(`FAIL: ${m}`); cleanup(); process.exit(1); };
 const ok = (m) => console.log(`  ok  ${m}`);
 
 console.log(`pack-probe: ${pkg.name}@${pkg.version}`);
@@ -53,6 +62,11 @@ const packed = spawnSync("npm", ["pack", "--silent"], { cwd: repo, shell: true, 
 if (packed.status !== 0) fail("npm pack");
   tgz = packed.stdout.trim().split("\n").pop().trim();
 ok(`packed ${tgz}`);
+// Armed here, not at the try below: the listing checks between this line and
+// there also call fail(), and a tarball stranded in the clone lands untracked
+// in `git status` -- .gitignore has no *.tgz rule. Only ever removes a tarball
+// WE created; in consume mode it belongs to the caller.
+cleanup = () => { try { rmSync(join(repo, tgz), { force: true }); } catch { /* ignore */ } };
 
 // The tarball must not carry sources, tests or tooling.
 const listing = spawnSync("npm", ["pack", "--dry-run", "--json"], { cwd: repo, shell: true, encoding: "utf8" });
@@ -74,6 +88,21 @@ ok(`tarball is ${files.length} files, no sources or tests`);
 
 // --- 2. install cold, no clone --------------------------------------------
 const dir = mkdtempSync(join(tmpdir(), "packprobe-"));
+let child;
+cleanup = () => {
+  // Kill the TREE: shell:true means child.pid is the shell's, and the node
+  // grandchild is what holds `dir` open as its cwd.
+  if (child?.pid) {
+    if (process.platform === "win32") spawnSync("taskkill", ["/pid", String(child.pid), "/T", "/F"], { stdio: "ignore" });
+    else child.kill("SIGKILL");
+  }
+  // Teardown never decides the verdict -- an EBUSY on a temp directory is not a
+  // failure of the artifact under test -- but a removal that fails says so
+  // rather than vanishing into a bare catch.
+  try { rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 250 }); }
+  catch (e) { console.error(`  warn  could not remove ${dir}: ${e.code}`); }
+  if (!provided && tgz) { try { rmSync(join(repo, tgz), { force: true }); } catch { /* ignore */ } }
+};
 try {
   writeFileSync(join(dir, "package.json"), JSON.stringify({ name: "packprobe", version: "1.0.0", private: true }));
   // Quoted for the reason build-mcpb.mjs states: shell:true re-splits, and this
@@ -115,7 +144,7 @@ try {
   const BAD_KNOB = "pack-probe-malformed";
   const childEnv = { ...process.env, HUD_CACHE_TTL_MS: BAD_KNOB, HUD_HTTP_ATTEMPTS: "1" };
   delete childEnv.HUD_API_TOKEN;
-  const child = spawn(`"${shim}"`, [], {
+  child = spawn(`"${shim}"`, [], {
     stdio: ["pipe", "pipe", "pipe"],
     cwd: dir,
     shell: true,
@@ -176,9 +205,5 @@ try {
 
   console.log("PASS — the published artifact starts and serves its tools.");
 } finally {
-  // Teardown is best-effort and must never decide the verdict: an EBUSY on a
-  // temp directory is not a failure of the artifact under test.
-  try { rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }); } catch { /* leave it to the OS */ }
-  // Only remove a tarball WE created; in consume mode it belongs to the caller.
-  if (!provided) { try { rmSync(join(repo, tgz ?? ""), { force: true }); } catch { /* ignore */ } }
+  cleanup();
 }
