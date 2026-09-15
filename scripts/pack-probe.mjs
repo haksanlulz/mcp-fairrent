@@ -93,7 +93,34 @@ try {
   // (That toothless version was written first and caught by mutation-probing it.)
   const isWin = process.platform === "win32";
   const shim = resolve(dir, "node_modules", ".bin", isWin ? `${binName}.cmd` : binName);
-  const child = spawn(`"${shim}"`, [], { stdio: ["pipe", "pipe", "pipe"], cwd: dir, shell: true });
+  // Launch with a DELIBERATELY MALFORMED knob. The server's only console write
+  // is the line that rejects one, and a typo in a client's env block is the one
+  // input a user gets wrong by accident. On stdout that line interleaves with
+  // JSON-RPC and the session dies. The offline suite runs over an in-memory
+  // transport with no stdout to corrupt, so this process is the only place the
+  // real file descriptors are under test -- and it was launching with valid
+  // knobs, so the warning never fired here either.
+  //
+  // HUD_CACHE_TTL_MS, not HUD_HTTP_ATTEMPTS: knobs are read per call, never at
+  // import, so nothing is validated until a request path runs. The TTL is read
+  // by the cache lookup at the top of hudGet, which is the first thing any tool
+  // does. Measured here first -- a probe set on HUD_HTTP_ATTEMPTS produced no
+  // diagnostic at all through initialize + tools/list, neither of which touches
+  // a request path.
+  //
+  // HUD_API_TOKEN is REMOVED rather than passed through. The tool call below
+  // then fails at the token check, which happens while the request headers are
+  // built and therefore before any socket opens: the probe stays offline and
+  // deterministic, and still runs far enough to read the knob.
+  const BAD_KNOB = "pack-probe-malformed";
+  const childEnv = { ...process.env, HUD_CACHE_TTL_MS: BAD_KNOB, HUD_HTTP_ATTEMPTS: "1" };
+  delete childEnv.HUD_API_TOKEN;
+  const child = spawn(`"${shim}"`, [], {
+    stdio: ["pipe", "pipe", "pipe"],
+    cwd: dir,
+    shell: true,
+    env: childEnv,
+  });
   let out = "", err = "";
   child.stdout.on("data", (d) => (out += d));
   child.stderr.on("data", (d) => (err += d));
@@ -104,13 +131,37 @@ try {
   await new Promise((r) => setTimeout(r, 1200));
   send({ jsonrpc: "2.0", id: 2, method: "tools/list", params: {} });
   await new Promise((r) => setTimeout(r, 2000));
+  // Reaches a request path, which is where the knobs are read. It answers with
+  // the missing-token error, and that is the intended result: what is under
+  // test is the channel the rejected knob is announced on, not the lookup.
+  send({ jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "list_metro_areas", arguments: {} } });
+  await new Promise((r) => setTimeout(r, 1500));
   child.kill();
   // Windows keeps a lock on the install dir until the child is really gone;
   // without this wait, teardown throws EBUSY and masks the probe's own verdict.
   await new Promise((r) => { child.once("exit", r); setTimeout(r, 3000); });
 
-  const msgs = out.split("\n").filter(Boolean)
-    .map((l) => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean);
+  // Every line on stdout must be a JSON-RPC message. This used to drop
+  // unparseable lines silently, so a diagnostic written to stdout would have
+  // been swallowed by the probe and the framing break never seen. Checked
+  // BEFORE the stderr assertion below so that a diagnostic on the wrong channel
+  // is reported as what it is, quoting the line, rather than as an absence.
+  const stdoutLines = out.split("\n").map((l) => l.trim()).filter(Boolean);
+  const msgs = [];
+  const junk = [];
+  for (const line of stdoutLines) {
+    try { msgs.push(JSON.parse(line)); } catch { junk.push(line); }
+  }
+  if (junk.length) fail(`stdout carries non-JSON-RPC lines, which breaks framing: ${junk.slice(0, 3).join(" | ").slice(0, 400)}`);
+  ok(`stdout is ${stdoutLines.length} lines, all JSON-RPC`);
+
+  // And the knob had to actually be rejected, or the check above is vacuous: a
+  // probe that cannot produce the diagnostic cannot prove where it went.
+  if (!/HUD_CACHE_TTL_MS/.test(err)) {
+    fail(`the malformed knob produced no diagnostic at all — this probe cannot see where one goes. stderr: ${err.slice(0, 500)}`);
+  }
+  ok("a malformed knob is reported, and reported on stderr");
+
   const init = msgs.find((m) => m.id === 1);
   const tools = msgs.find((m) => m.id === 2);
 

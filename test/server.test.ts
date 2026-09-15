@@ -1313,6 +1313,32 @@ describe("environment knobs", () => {
     expect(hudConfig()).toEqual({ attempts: 2, retryBackoffMs: [250, 750], cacheTtlMs: 60000, cacheMax: 5 });
   });
 
+  it("announces a rejected knob on stderr, never on the JSON-RPC channel", () => {
+    // knobWarn is the server's only console write, and it is reached by the one
+    // input a user gets wrong without knowing it: a typo in their client's env
+    // block. On stdout that line interleaves with JSON-RPC and kills the
+    // session. console.error is fd 2, console.log/info/warn/debug are fd 1, so
+    // the method IS the channel and that is what this pins.
+    //
+    // The raw value is unique on purpose: knobWarn dedupes on `name=raw` for
+    // the life of the process, so reusing "oops" from the tests above would
+    // silence the warning and pass vacuously.
+    const stdoutMethods = ["log", "info", "warn", "debug"] as const;
+    const spies = stdoutMethods.map((m) => vi.spyOn(console, m).mockImplementation(() => {}));
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      vi.stubEnv("HUD_HTTP_ATTEMPTS", "stdout-channel-probe");
+      expect(hudConfig().attempts).toBe(3);
+      expect(errSpy).toHaveBeenCalledTimes(1);
+      expect(String(errSpy.mock.calls[0][0])).toContain("HUD_HTTP_ATTEMPTS");
+      for (const [i, spy] of spies.entries()) {
+        expect(spy, `console.${stdoutMethods[i]} writes to stdout`).not.toHaveBeenCalled();
+      }
+    } finally {
+      for (const s of [...spies, errSpy]) s.mockRestore();
+    }
+  });
+
   it("waits the configured backoff between attempts", async () => {
     // The suite runs on a flattened ladder, so this is the one place that pins
     // the ladder to the clock. To pin anything the ladder has to CLEAR the

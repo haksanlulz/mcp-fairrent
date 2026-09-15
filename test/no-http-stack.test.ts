@@ -62,3 +62,35 @@ describe("dependency surface", () => {
     expect(Object.keys(pkg.dependencies ?? {})).toEqual(["@modelcontextprotocol/sdk"]);
   });
 });
+
+/**
+ * stdout is the JSON-RPC channel. A single non-JSON line interleaved into it
+ * breaks framing for the client, and the server is then dead to a user who did
+ * nothing worse than typo a knob in their config.
+ *
+ * knobWarn (server.ts) is this server's only console write and correctly goes
+ * to stderr, but until this test nothing could see it move: the offline suite
+ * runs over InMemoryTransport, which has no stdout at all, and both channel
+ * probes launch with valid knobs so the warn line never fires in either. Same
+ * shape as the resolver hook this file already records — a guard that cannot go
+ * red is worse than no guard, so here is one that can.
+ *
+ * This is the source half. The behavioural half — that knobWarn itself picks
+ * console.error — is in server.test.ts under "environment knobs", and the real
+ * channel is pack-probe.mjs, which now launches the installed binary with a
+ * deliberately malformed knob.
+ */
+const STDOUT_WRITES = /(?:console\.(?:log|info|warn|debug)|process\.stdout\.write)\s*\(/g;
+
+describe("stdio channel discipline", () => {
+  it("writes diagnostics to stderr only, never to stdout", () => {
+    const offenders: string[] = [];
+    for (const f of ["index.ts", "server.ts"]) {
+      const src = readFileSync(join(ROOT, f), "utf8");
+      for (const m of src.matchAll(STDOUT_WRITES)) offenders.push(`${f}: ${m[0]}`);
+    }
+    // If this fails, the write belongs on console.error. There is no stdout
+    // budget to spend: the transport owns that file descriptor.
+    expect(offenders).toEqual([]);
+  });
+});
