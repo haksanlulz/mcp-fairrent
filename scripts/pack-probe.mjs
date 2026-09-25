@@ -109,8 +109,13 @@ try {
   // argument is an absolute path into the clone. A clone under a path with a
   // space otherwise fails the cold install and reads as a bad tarball.
   const tarball = provided ? tgz : join(repo, tgz);
-  const inst = spawnSync("npm", ["install", "--silent", `"${tarball}"`], { cwd: dir, shell: true, encoding: "utf8" });
-  if (inst.status !== 0) fail(`cold install failed: ${inst.stderr?.slice(0, 400)}`);
+  // --loglevel error, not --silent: --silent writes nothing on failure (measured
+  // 2026-09-15: status 1, 0 bytes on both streams), so the FAIL printed no cause.
+  const inst = spawnSync("npm", ["install", "--loglevel", "error", `"${tarball}"`], { cwd: dir, shell: true, encoding: "utf8" });
+  if (inst.status !== 0) {
+    const cause = (inst.stderr?.trim() || inst.stdout?.trim() || "npm printed nothing").replace(/\s*\r?\n\s*/g, " | ");
+    fail(`cold install failed (status ${inst.status}): ${cause.slice(0, 400)}`);
+  }
   ok("installed into a clean project");
 
   const binName = Object.keys(pkg.bin ?? {})[0];
