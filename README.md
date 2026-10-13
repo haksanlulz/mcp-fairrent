@@ -146,12 +146,12 @@ npm run verify:mcpb # unpack that bundle and launch it the way a host does
 
 Two tiers, already split by script. `npm test` is the offline tier: vitest, in-memory MCP transport, `fetch` mocked, no token. `npm run smoke` is the live tier: one real HUD call per tool, needs `HUD_API_TOKEN`, exits 0 with a skip line without it. CI runs only the offline tier.
 
-Counts, measured 2026-09-14 after the last change of the day:
+Counts, measured 2026-10-13:
 
 ```bash
-find . -name '*.ts' -not -path './node_modules/*' -not -path './dist/*' -not -path './build/*' -not -path './test/*' -not -name smoke.ts | xargs wc -l   # app: 1033 lines (index.ts + server.ts; smoke.ts is another 70)
-find ./test -name '*.test.ts' | xargs wc -l                                                                                                                # tests: 1594 lines, 2 files
-npm test                                                                                                                                                   # 75 tests, 75 passed
+find . -name '*.ts' -not -path './node_modules/*' -not -path './dist/*' -not -path './build/*' -not -path './test/*' -not -name smoke.ts | xargs wc -l   # app: 1094 lines (index.ts + server.ts; smoke.ts is another 70)
+find ./test -name '*.test.ts' | xargs wc -l                                                                                                                # tests: 1644 lines, 3 files
+npm test                                                                                                                                                   # 77 tests, 77 passed
 ```
 
 `build/` is excluded because `npm run build:mcpb` stages a copy of the server there.
@@ -167,6 +167,17 @@ Fix round, same day. Two by mutation: deleting the backoff sleep from `withRetry
 Second fix round, same day. Three by mutation: dropping `?? backoffs[backoffs.length - 1]` from `withRetry` (the new ladder test goes red at 4349ms against a 2000ms bound, while the attempt count stays at 4 either way); moving the 2BR fixture rent one dollar (the pinned README verdict goes red); and restoring the hand-written entityid error (the schema-vs-error test prints the two strings side by side). The income-year rewrite was written red-first. The two bundle-script fixes are not test-visible and were measured directly: a spaced path under `shell: true` exits 1 unquoted and 0 quoted, and the probe's temp directory count goes 23 → 24 on the old code and 24 → 24 on the new, on both the PASS and the FAIL path.
 
 Call-count assertions (`toHaveBeenCalledTimes`, `not.toHaveBeenCalled`) were audited 2026-09-11 at 12 sites: 12 kept, 0 pruned. Re-counted 2026-09-15 at 22. Both figures included one bare `expect(good).toHaveBeenCalled()` in "does not cache a failure", which fits neither named matcher; the two matchers alone were 11 and 21. The rounds above added ten, and the audited figure was left standing under paragraphs that had moved what "the same day" pointed at. The ten: the backoff ladder's attempt counts, a malformed attempts knob still making the request, the cache TTL and cache-bound knobs, the two console-channel spies, and the entityid error firing before any network call. Each one pins a contract (which endpoint a call hit, validation firing before the network, retry counts, cache hits, which console method a diagnostic took). None of them asserts that a function ran. Policy: assert behavior and payloads, never bare invocation. Re-counted 2026-09-25, the two named matchers only: `grep -oE 'toHaveBeenCalledTimes|not\.toHaveBeenCalled\(\)' test/*.ts | wc -l` gives 22. The unknown-argument check added one `not.toHaveBeenCalled`.
+
+## What I'd do differently
+
+The full record is the escape log in [GAUNTLET.md](GAUNTLET.md) §6. The short version:
+
+- **Watch a check fail before trusting it.** The CI workflow was copied from three sibling repos and triggered on `main`; this repo's branch was `master`, so it never ran, and nothing looked wrong. A test meant to pin the retry backoff passed with the backoff deleted, because the request throttle alone took longer than the test's bound. The CI gap surfaced by accident, from a commit printing `[master ...]`; the backoff test was caught by deleting the sleep and watching the suite stay green.
+- **A bug found once is a class.** The bundle probe broke on Windows paths with spaces and leaked a 12 MB temp directory per run. The fix landed in that script, and the same two defects sat in `pack-probe.mjs` and `build-mcpb.mjs` until a later pass; 45 leaked directories had piled up by then. Fixes now get a sweep of every copy.
+- **Pin the documentation to the tests.** A test named after the README's worked example asserted different figures from the ones the README printed. The README's verdicts are now asserted against the fixtures that produce them.
+- **Keep stdout clean by test, not by comment.** The server's one console write went to stderr under a comment saying it must. Switching it to `console.log` broke no test while it would have corrupted JSON-RPC for any user with a typo in a config knob. A source scan, a spy, and a launch with a malformed knob now each catch it.
+
+Still open: two of the three planned acceptance specs in GAUNTLET §5, and a check that what this README documents actually executes.
 
 ## AI assistance
 
