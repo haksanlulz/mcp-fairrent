@@ -168,17 +168,6 @@ Second fix round, same day. Three by mutation: dropping `?? backoffs[backoffs.le
 
 Call-count assertions (`toHaveBeenCalledTimes`, `not.toHaveBeenCalled`) were audited 2026-09-11 at 12 sites: 12 kept, 0 pruned. Re-counted 2026-09-15 at 22. Both figures included one bare `expect(good).toHaveBeenCalled()` in "does not cache a failure", which fits neither named matcher; the two matchers alone were 11 and 21. The rounds above added ten, and the audited figure was left standing under paragraphs that had moved what "the same day" pointed at. The ten: the backoff ladder's attempt counts, a malformed attempts knob still making the request, the cache TTL and cache-bound knobs, the two console-channel spies, and the entityid error firing before any network call. Each one pins a contract (which endpoint a call hit, validation firing before the network, retry counts, cache hits, which console method a diagnostic took). None of them asserts that a function ran. Policy: assert behavior and payloads, never bare invocation. Re-counted 2026-09-25, the two named matchers only: `grep -oE 'toHaveBeenCalledTimes|not\.toHaveBeenCalled\(\)' test/*.ts | wc -l` gives 22. The unknown-argument check added one `not.toHaveBeenCalled`.
 
-## What I'd do differently
-
-The full record is the escape log in [GAUNTLET.md](GAUNTLET.md) §6. The short version:
-
-- **Watch a check fail before trusting it.** The CI workflow was copied from three sibling repos and triggered on `main`; this repo's branch was `master`, so it never ran, and nothing looked wrong. A test meant to pin the retry backoff passed with the backoff deleted, because the request throttle alone took longer than the test's bound. The CI gap surfaced by accident, from a commit printing `[master ...]`; the backoff test was caught by deleting the sleep and watching the suite stay green.
-- **A bug found once is a class.** The bundle probe broke on Windows paths with spaces and leaked a 12 MB temp directory per run. The fix landed in that script, and the same two defects sat in `pack-probe.mjs` and `build-mcpb.mjs` until a later pass; 45 leaked directories had piled up by then. Fixes now get a sweep of every copy.
-- **Pin the documentation to the tests.** A test named after the README's worked example asserted different figures from the ones the README printed. The README's verdicts are now asserted against the fixtures that produce them.
-- **Keep stdout clean by test, not by comment.** The server's one console write went to stderr under a comment saying it must. Switching it to `console.log` broke no test while it would have corrupted JSON-RPC for any user with a typo in a config knob. A source scan, a spy, and a launch with a malformed knob now each catch it.
-
-Still open: two of the three planned acceptance specs in GAUNTLET §5, and a check that what this README documents actually executes.
-
 ## AI assistance
 
 This project was built with AI assistance (Claude). Correctness rests on the checks. The vitest suite drives every tool over the MCP in-memory transport against fixtures that mirror HUD's documented response samples, including this README's worked example, and `npm run smoke` makes one live call per tool against the real HUD API. I reviewed the code and I'm accountable for what it does.
